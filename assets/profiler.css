@@ -460,3 +460,15 @@
   cursor: pointer; padding: 2px 8px; }
 .heldout-remove:hover { border-color: var(--accent); color: var(--accent); }
 .proxy-heldout .proxy-hints-btn { margin: 4px 0 10px; }
+
+/* Extra column-name keywords (--keywords, #856): a wide JSON textarea in the thresholds grid. */
+.keywords-label { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.keywords-input { width: 100%; min-height: 3em; font-family: var(--mono); resize: vertical; }
+.keywords-input[aria-invalid="true"] { border-color: var(--accent); }
+.keywords-restored { grid-column: 1 / -1; margin: 0; font-size: 0.85em; color: var(--muted); }
+.keywords-restored .action-btn { padding: 2px 8px; margin-left: 6px; }
+.keywords-error { color: var(--accent); font-size: 0.85em; }
+
+/* Text-encoding picker next to the dropzones (#857). */
+.encoding-picker { display: inline-flex; align-items: center; gap: 8px; margin: 8px 0 0 12px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted); }

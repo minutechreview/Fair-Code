@@ -631,8 +631,8 @@ def test_to_csv_includes_proxy_hints_section_only_when_present():
     assert "proxy_hint_a" not in to_csv(base)
     hints = [{"a": "sex", "b": "race", "p_value": 0.001, "cramers_v": 0.42, "chi2": 9.0}]
     rows = list(csv.reader(io.StringIO(to_csv({**base, "proxy_hints": hints}))))
-    i = rows.index(["proxy_hint_a", "proxy_hint_b", "p_value", "cramers_v"])
-    assert rows[i + 1] == ["sex", "race", "0.001", "0.42"]
+    i = rows.index(["proxy_hint_a", "proxy_hint_b", "p_value", "cramers_v", "n_tests", "low_expected"])
+    assert rows[i + 1] == ["sex", "race", "0.001", "0.42", "", "False"]
 
 
 def test_compare_to_csv_includes_labelled_proxy_hints_per_dataset():
@@ -640,8 +640,8 @@ def test_compare_to_csv_includes_labelled_proxy_hints_per_dataset():
     hint = {"a": "sex", "b": "race", "p_value": 0.01, "cramers_v": 0.3, "chi2": 5.0}
     text = compare_to_csv({**base, "proxy_hints_a": [hint], "proxy_hints_b": [hint]})
     rows = list(csv.reader(io.StringIO(text)))
-    assert ["A", "sex", "race", "0.01", "0.3"] in rows
-    assert ["B", "sex", "race", "0.01", "0.3"] in rows
+    assert ["A", "sex", "race", "0.01", "0.3", "", "False"] in rows
+    assert ["B", "sex", "race", "0.01", "0.3", "", "False"] in rows
     assert "dataset" in text
 
 
@@ -671,3 +671,118 @@ def test_csv_exports_defuse_spreadsheet_formula_injection():
     assert rows[1][0] == "'+x" and rows[1][2] == "'=HYPERLINK(\"http://x\")"
     assert rows[1][4] == "-0.5"
     assert ["'=cmd"] in rows
+
+
+def test_terminal_reports_escape_control_characters_from_dataset_values():
+    """#845: an escape sequence in a group label or column name must not reach the terminal."""
+    df = pd.DataFrame({"sex": ["\x1b[31mRED", "F", "M", "F"], "age\x1b]0;pwned\x07": [20, 30, 40, 50]})
+    result = profile(df)
+    out = to_terminal(result)
+    assert "\x1b" not in out and "\x07" not in out
+    assert "\\x1b[31mRED" in out
+    # JSON-style data stays lossless
+    assert any(g["label"] == "\x1b[31mRED" for d in result["dimensions"] for g in d["groups"])
+
+
+def test_compare_terminal_escapes_control_characters():
+    a = profile(pd.DataFrame({"sex": ["\x1b[2JM", "F", "M", "F"]}))
+    b = profile(pd.DataFrame({"sex": ["\x1b[2JM", "F", "F", "F"]}))
+    out = compare_to_terminal(compare(a, b, name_a="a\x1b[1m.csv", name_b="b.csv"))
+    assert "\x1b" not in out
+    assert "\\x1b[1m" in out
+
+
+def test_compare_csv_lists_dimensions_present_in_only_one_dataset():
+    """#842: removed/added dimensions get dimension,present_in rows, not just a flag."""
+    base = {"dimensions": [], "flags": [], "removed_dimensions": ["race"],
+            "added_dimensions": ["region", "age"]}
+    rows = list(csv.reader(io.StringIO(compare_to_csv(base))))
+    i = rows.index(["dimension", "present_in"])
+    assert rows[i + 1:i + 4] == [["race", "a_only"], ["region", "b_only"], ["age", "b_only"]]
+    plain = compare_to_csv({"dimensions": [], "flags": [], "removed_dimensions": [],
+                            "added_dimensions": []})
+    assert "present_in" not in plain
+
+
+def _compare_with_hints():
+    import pandas as pd
+    from faircode import compare, profile
+    a = profile(pd.DataFrame({"sex": ["m", "f"] * 30}))
+    cmp = compare(a, a, "a.csv", "b.csv")
+    hint = {"a": "sex", "b": "<occupation>", "p_value": 0.00123, "cramers_v": 0.42, "chi2": 10.0,
+            "low_expected_share": 0.5, "low_expected": True, "p_method": "permutation", "n_tests": 1}
+    capped = dict(hint, a="age", b="job & title", p_method="chi2-capped")
+    cmp["proxy_hints_a"] = [hint, capped]
+    cmp["proxy_hints_b"] = [dict(hint, b="region", low_expected=False, p_method="chi2")]
+    return cmp
+
+
+def test_compare_terminal_report_renders_proxy_hint_sections_for_both_sides():
+    # #960
+    from faircode.report import compare_to_terminal
+    text = compare_to_terminal(_compare_with_hints())
+    assert "PROXY HINTS - A" in text and "PROXY HINTS - B" in text
+    assert "sex ↔ <occupation>" in text and "χ² p=0.00123" in text and "Cramér's V=0.42" in text
+    assert "small cells (permutation exact p)" in text
+    assert "too large for the exact fallback" in text            # chi2-capped note (#885)
+    assert text.index("PROXY HINTS - A") < text.index("PROXY HINTS - B")
+    plain = _compare_with_hints()
+    del plain["proxy_hints_a"], plain["proxy_hints_b"]
+    assert "PROXY HINTS" not in compare_to_terminal(plain)
+
+
+def test_compare_html_report_renders_and_escapes_proxy_hint_sections():
+    # #960: column names are user data, so the HTML must escape them.
+    from faircode.report import compare_to_html
+    html = compare_to_html(_compare_with_hints())
+    assert "Proxy Hints - A" in html and "Proxy Hints - B" in html
+    assert "sex ↔ &lt;occupation&gt;" in html and "job &amp; title" in html
+    assert "<occupation>" not in html and "small cells (permutation exact p)" in html
+    assert "too large for the exact fallback" in html
+
+
+def test_terminal_and_html_reports_say_imbalance_inf_for_an_empty_subgroup():
+    # #975
+    from js_helpers import result_with_an_empty_subgroup
+    result = result_with_an_empty_subgroup()
+    assert "(imbalance inf (empty subgroup))" in to_terminal(result)
+    assert "imbalance inf (empty subgroup)" in to_html(result)
+
+
+def _fifteen_group_profile():
+    df = pd.DataFrame({"tier": [f"grp{i % 15:02d}" for i in range(150)]})
+    return profile(df, {"tier": "categorical"}, {"max_categorical_card": 30})
+
+
+def test_terminal_reports_cap_a_long_dimension_with_an_and_n_more_groups_line():
+    # #976: DISPLAY_GROUPS (12) rows are shown, the other three are counted in a closing line.
+    result = _fifteen_group_profile()
+    assert len(result["dimensions"][0]["groups"]) == 15
+    text = to_terminal(result)
+    assert text.count("  … and 3 more groups") == 1
+    assert not any(line.startswith("  grp14") for line in text.splitlines())   # (it still appears in the flags)
+    drift = compare_to_terminal(compare(result, result, "a.csv", "b.csv"))
+    assert drift.count("  … and 3 more groups") == 1
+    assert not any(line.startswith("  grp14") for line in drift.splitlines())
+
+
+def test_compare_terminal_names_the_two_detected_kinds_for_a_kind_mismatch():
+    # #976: sex on one side and race on the other (what --map does) skips the drift comparison
+    # and says why.
+    side_a = profile(pd.DataFrame({"col": ["m", "f"] * 40}), {"col": "sex"})
+    side_b = profile(pd.DataFrame({"col": ["x", "y"] * 40}), {"col": "race"})
+    text = compare_to_terminal(compare(side_a, side_b, "a.csv", "b.csv"))
+    assert "  detected as sex vs race on the two datasets" in text
+
+
+def test_compare_html_caps_a_long_dimension_and_survives_all_zero_shares():
+    # #1001: the HTML drift card has its own "more groups" line and its own bar-scaling guard.
+    result = _fifteen_group_profile()
+    cmp_result = compare(result, result, "a.csv", "b.csv")
+    html_out = compare_to_html(cmp_result)
+    assert html_out.count('<div class="dim-more">… and 3 more groups</div>') == 1
+    assert "grp11" in html_out and "grp12" not in html_out
+    for group in cmp_result["dimensions"][0]["groups"]:
+        group.update(share_a=0.0, share_b=0.0, share_delta=0.0)
+    flat = compare_to_html(cmp_result)           # max_share would be 0: must not divide by zero
+    assert "nan" not in flat.lower() and "inf" not in flat.lower().replace("information", "")

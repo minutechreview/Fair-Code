@@ -9,8 +9,19 @@
   'use strict';
 
   var DISPLAY_GROUPS = 12; // mirror faircode/report.py
-  var FAIRCODE_VERSION = '2.3.0'; // mirrors profiler-ui.js's own copy
   var E = window.FairCodeProfiler;
+  var S = window.FairCodeShared;   // helpers shared with the other view (#983)
+  var FAIRCODE_VERSION = S.VERSION;
+  var KEYWORDS_EVENT = S.KEYWORDS_EVENT;
+  var readStoredKeywords = S.readStoredKeywords, writeStoredKeywords = S.writeStoredKeywords;
+  var setKeywordsError = S.setKeywordsError, checkKeywordsText = S.checkKeywordsText;
+  var showRestoredNote = S.showRestoredNote, announceKeywords = S.announceKeywords;
+  var fileDigest = S.fileDigest, heldOutEntries = S.heldOutEntries, setSkipNotes = S.setSkipNotes;
+  var flashButton = S.flashButton, fallbackCopy = S.fallbackCopy;
+  var esc = S.esc, pct = S.pct, prefersReducedMotion = S.prefersReducedMotion, readProxyAlpha = S.readProxyAlpha;
+  var exact = S.createExactInputs('compareProxy');
+  var exactControls = exact.controls, clearExactError = exact.clearError, showExactError = exact.showError;
+  var syncExactInputs = exact.sync, wireExactInputs = exact.wire;
   if (!E || !E.compare) return;
 
   var dropA = document.getElementById('dropA');
@@ -28,13 +39,18 @@
   var reportActionsEl = document.getElementById('compareReportActions');
   var downloadHtmlBtn = document.getElementById('compareDownloadHtmlBtn');
   var copyJsonBtn = document.getElementById('compareCopyJsonBtn');
+  var copyCliBtn = document.getElementById('compareCopyCliBtn');
   var downloadCsvBtn = document.getElementById('compareDownloadCsvBtn');
   var proxyBlockEl = document.getElementById('compareProxyHintsBlock');
   var proxyBtn = document.getElementById('compareProxyHintsBtn');
+  function pickedEncoding() {
+    var sel = document.getElementById('compareEncodingSelect');
+    return sel ? sel.value : 'auto';
+  }
   var heldOutA = window.FairCodeHeldOut.init(document.getElementById('compareHeldOutRowsA'),
-    document.getElementById('compareHeldOutAddA'), 'dataset A held-out');
+    document.getElementById('compareHeldOutAddA'), 'dataset A held-out', pickedEncoding);
   var heldOutB = window.FairCodeHeldOut.init(document.getElementById('compareHeldOutRowsB'),
-    document.getElementById('compareHeldOutAddB'), 'dataset B held-out');
+    document.getElementById('compareHeldOutAddB'), 'dataset B held-out', pickedEncoding);
   var proxyResultsEl = document.getElementById('compareProxyHintsResults');
   var mappingBlock = document.getElementById('compareMappingBlock');
   var mappingList = document.getElementById('compareMappingList');
@@ -46,7 +62,7 @@
   // hardcoded copy in profiler.html that could silently drift from them.
   thresholdInputs.forEach(function (input) {
     var def = E.DEFAULT_OPTS && E.DEFAULT_OPTS[input.dataset.opt];
-    if (def !== undefined) input.placeholder = String(def);
+    if (def !== undefined && def !== null) input.placeholder = String(def);
   });
 
   // #740: one delegated listener survives every re-render of resultsEl's
@@ -73,17 +89,15 @@
 
   // Loaded datasets: each { table, name } once a valid file is parsed.
   var slot = { A: null, B: null };
+  var heldSpecsA = [], heldSpecsB = []; // held-out specs behind the on-screen proxy hints (#811)
+  var encodingSelect = document.getElementById('compareEncodingSelect');
+  var currentProxySettings = null; // alpha/correction/exact behind the on-screen hints (#898)
   var currentCmp = null; // last successful compare() result, for export
   var currentProfiles = null; // {A, B} profile() results behind currentCmp, for proxy hints
   var currentOverrides = {}; // column -> forced kind, applied to both A and B
+  var currentRenames = {}; // {a_name: b_name} dimensions compared as one (--rename, #913)
   var currentOpts = {}; // threshold overrides (issue #351), applied to both A and B
 
-  function pct(x) { return (x * 100).toFixed(1) + '%'; }
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
   function stripNegZero(x, dp) {
     // Mirrors faircode.report._strip_neg_zero: a tiny negative value that
     // rounds to zero at the display precision should render as "0.0", not
@@ -97,35 +111,6 @@
     var s = x.toFixed(dp === undefined ? 1 : dp);
     return (x > 0 ? '+' : '') + s;
   }
-  function prefersReducedMotion() {
-    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  }
-
-  // Ported from profiler-ui.js's fileDigest (issue #375) - hashes the raw
-  // File object's bytes, or reports why it can't (in-memory sample data,
-  // a read failure) so a Compare export can be tied back to what produced
-  // it the same way the Profile view's export and the CLI/MCP provenance
-  // block already can.
-  async function fileDigest(file) {
-    if (!file) {
-      return {
-        digest: null,
-        note: 'dataset was generated in memory; raw bytes were not retained'
-      };
-    }
-    try {
-      var buffer = await file.arrayBuffer();
-      var hash = await crypto.subtle.digest('SHA-256', buffer);
-      var bytes = new Uint8Array(hash);
-      var hex = Array.prototype.map.call(bytes, function (b) {
-        return b.toString(16).padStart(2, '0');
-      }).join('');
-      return { digest: 'sha256:' + hex, note: null };
-    } catch (err) {
-      return { digest: null, note: 'could not read file for hashing: ' + err.message };
-    }
-  }
-
   // ── File wiring for one slot ('A' or 'B') ──────────────────────────────
   function wireSlot(key, drop, input, nameEl) {
     drop.addEventListener('click', function () { input.click(); });
@@ -164,11 +149,13 @@
     var reader = new FileReader();
     reader.onerror = function () { showError('Could not read dataset ' + key + '.'); };
 
-    function applyTable(table) {
+    var slotEncoding = null;   // encoding this file was decoded with (provenance, #857)
+
+    function applyTable(table, sheet) {
       if (!table.columns.length || !table.rows.length) {
         return showError('Dataset ' + key + ' looks empty or has no data rows.');
       }
-      setSlot(key, table, file.name, drop, nameEl, file);
+      setSlot(key, table, file.name, drop, nameEl, file, slotEncoding, sheet);
     }
 
     if (/\.xlsx$/i.test(file.name) || isXlsxType) {
@@ -176,7 +163,7 @@
         try {
           var result = await E.parseXLSX(reader.result);
 
-          applyTable(result.table);
+          applyTable(result.table, { sheet: result.sheetName, sheets_ignored: result.ignoredSheets.length });
 
           if (result.ignoredSheets.length > 0) {
             statusEl.textContent =
@@ -196,7 +183,9 @@
     } else {
       reader.onload = async function () {
         try {
-          var text = String(reader.result);
+          var decoded = E.decodeText(reader.result, encodingSelect ? encodingSelect.value : 'auto');
+          slotEncoding = decoded.encoding;
+          var text = decoded.text;
           var table = (/\.json$/i.test(file.name) || file.type === 'application/json')
             ? E.parseJSON(text) : E.parseCSV(text);
           applyTable(table);
@@ -204,28 +193,45 @@
           showError('Could not read dataset ' + key + ': ' + err.message);
         }
       };
-      reader.readAsText(file);
+      reader.readAsArrayBuffer(file);
     }
   }
 
-  function setSlot(key, table, name, drop, nameEl, file) {
-    slot[key] = { table: table, name: name, file: file || null };
+  function setSlot(key, table, name, drop, nameEl, file, encoding, sheet) {
+    slot[key] = { table: table, name: name, file: file || null, encoding: encoding || null, sheet: sheet || null };
     nameEl.textContent = name;
     drop.classList.add('loaded');
     errorEl.hidden = true;
     currentOverrides = {}; // a changed input may have an entirely different schema
+    currentRenames = {};
     currentOpts = {};
     resetThresholdInputs();
     thresholdsBlock.hidden = false;
     renderMapping(); // rebuild the panel for the new column set (once per file load)
+    var heldOut = key === 'A' ? heldOutA : heldOutB;
+    if (heldOut && heldOut.reset) heldOut.reset();
     maybeCompare();
   }
+
+
 
   function resetThresholdInputs() {
     thresholdInputs.forEach(function (input) {
       input.value = '';
       input.classList.remove('overridden');
     });
+    if (thresholdControls) {
+      // The keywords box is not a per-file tweak: it is refilled from storage and
+      // re-applied to the fresh currentOpts instead of being cleared (#888).
+      Array.prototype.forEach.call(thresholdControls.querySelectorAll('[data-opt-json]'), function (area) {
+        var checked = checkKeywordsText(readStoredKeywords().trim());
+        area.value = checked.value !== undefined ? readStoredKeywords() : '';
+        area.classList.toggle('overridden', checked.value !== undefined);
+        setKeywordsError(area, '');
+        if (checked.value !== undefined) currentOpts[area.dataset.optJson] = checked.value;
+        showRestoredNote(area, checked.value !== undefined);   // say where the filled box came from (#930)
+      });
+    }
   }
 
   thresholdInputs.forEach(function (input) {
@@ -245,12 +251,71 @@
     });
   });
 
+
+  // Extra detection vocabulary (--keywords, #856): a JSON textarea. Invalid JSON is
+  // flagged and ignored; a vocabulary the engine rejects is reverted like a bad threshold.
+  Array.prototype.slice.call(
+    thresholdControls ? thresholdControls.querySelectorAll('[data-opt-json]') : []
+  ).forEach(function (area) {
+    area.addEventListener('input', function () {
+      var opt = area.dataset.optJson;
+      showRestoredNote(area, false);   // an edit makes it the person's own text
+      var checked = checkKeywordsText(area.value.trim());
+      if (checked.error) { setKeywordsError(area, checked.error); return; }
+      setKeywordsError(area, '');
+      if (checked.empty) {
+        delete currentOpts[opt];
+        area.classList.remove('overridden');
+      } else {
+        currentOpts[opt] = checked.value;
+        area.classList.add('overridden');
+      }
+      writeStoredKeywords(checked.empty ? '' : area.value);
+      announceKeywords(area);
+      maybeCompare(false);
+    });
+  });
+
+  document.addEventListener(KEYWORDS_EVENT, function (ev) {
+    if (!thresholdControls) return;
+    Array.prototype.forEach.call(thresholdControls.querySelectorAll('[data-opt-json]'), function (area) {
+      if (ev.detail && ev.detail.source === area.id) return;
+      var text = readStoredKeywords(), checked = checkKeywordsText(text.trim());
+      if (checked.error) return;
+      area.value = checked.empty ? '' : text;
+      area.classList.toggle('overridden', !checked.empty);
+      setKeywordsError(area, '');
+      showRestoredNote(area, false);
+      if (checked.empty) delete currentOpts[area.dataset.optJson]; else currentOpts[area.dataset.optJson] = checked.value;
+      maybeCompare(false);
+    });
+  });
+
+  // Forget: empty the box, the stored text and the applied vocabulary, and tell the other view.
+  Array.prototype.forEach.call(thresholdControls ? thresholdControls.querySelectorAll('[data-opt-json]') : [], function (area) {
+    var forget = document.getElementById(area.id.replace('Input', 'Forget'));
+    if (!forget) return;
+    forget.addEventListener('click', function () {
+      area.value = '';
+      area.classList.remove('overridden');
+      setKeywordsError(area, '');
+      delete currentOpts[area.dataset.optJson];
+      writeStoredKeywords('');
+      showRestoredNote(area, false);
+      announceKeywords(area);
+      maybeCompare(false);
+    });
+  });
+
+  // Page load: bring back the remembered vocabulary (#888).
+  resetThresholdInputs();
+
   function maybeCompare(scroll) {
     if (!slot.A || !slot.B) return;
     try {
       var profA = E.profile(slot.A.table, currentOverrides, currentOpts);
       var profB = E.profile(slot.B.table, currentOverrides, currentOpts);
-      var cmp = E.compare(profA, profB, slot.A.name, slot.B.name);
+      var cmp = E.compare(profA, profB, slot.A.name, slot.B.name, currentRenames);
       currentProfiles = { A: profA, B: profB };
       errorEl.hidden = true;
       render(cmp, scroll !== false);
@@ -325,21 +390,7 @@
     mappingBlock.hidden = false;
   }
 
-  function readOverrides() {
-    var overrides = {};
-    var selects = mappingList.querySelectorAll('.map-select');
-    for (var i = 0; i < selects.length; i++) {
-      var sel = selects[i];
-      var row = sel.closest('.map-row');
-      if (sel.value !== 'auto') {
-        overrides[sel.getAttribute('data-col')] = sel.value;
-        if (row) row.classList.add('overridden');
-      } else if (row) {
-        row.classList.remove('overridden');
-      }
-    }
-    return overrides;
-  }
+  function readOverrides() { return S.readOverrides(mappingList); }
 
   // Delegated so it keeps working across re-renders of the list.
   mappingList.addEventListener('change', function (e) {
@@ -386,6 +437,16 @@
         '</ul></div>';
     }
 
+    // One click acts on a rename suggestion (or undoes it): compares the pair as one dimension (#913).
+    var pairing = (cmp.possible_renames || []).map(function (r) {
+      return '<button type="button" class="action-btn rename-pair-btn" data-rename-a="' + esc(r.a) + '" data-rename-b="' +
+        esc(r.b) + '">Compare \u2018' + esc(r.a) + '\u2019 and \u2018' + esc(r.b) + '\u2019 as one</button>';
+    }).concat((cmp.renamed_dimensions || []).map(function (r) {
+      return '<button type="button" class="action-btn rename-undo-btn" data-rename-a="' + esc(r.a) +
+        '">Stop comparing \u2018' + esc(r.a) + '\u2019 and \u2018' + esc(r.b) + '\u2019 as one</button>';
+    })).join(' ');
+    if (pairing) flags += '<div class="rename-actions" style="margin-top:12px">' + pairing + '</div>';
+
     var cards = cmp.dimensions.map(driftCard).join('');
     if (!cmp.dimensions.length) {
       cards = '<p class="section-note" style="margin-top:16px">No demographic dimension is ' +
@@ -403,6 +464,18 @@
     }
 
     resultsEl.innerHTML = summary + flags + cards + only;
+    Array.prototype.forEach.call(resultsEl.querySelectorAll('.rename-pair-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        currentRenames[btn.dataset.renameA] = btn.dataset.renameB;
+        maybeCompare(false);
+      });
+    });
+    Array.prototype.forEach.call(resultsEl.querySelectorAll('.rename-undo-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        delete currentRenames[btn.dataset.renameA];
+        maybeCompare(false);
+      });
+    });
     resultsEl.hidden = false;
     if (scroll) {
       resultsEl.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
@@ -493,7 +566,7 @@
   function proxyHintItems(hints) {
     return hints.map(function (h) {
       return '<li>' + esc(h.a) + ' ↔ ' + esc(h.b) + ' (χ² p=' + h.p_value.toPrecision(4) +
-        ', Cramér’s V=' + h.cramers_v.toFixed(2) + (h.p_adjusted !== undefined ? ', adj p=' + h.p_adjusted.toPrecision(4) : '') + ')</li>';
+        ', Cramér’s V=' + h.cramers_v.toFixed(2) + (h.p_adjusted !== undefined ? ', adj p=' + h.p_adjusted.toPrecision(4) : '') + E.proxyFamily(h) + E.proxyNotes(h) + ')</li>';
     }).join('');
   }
 
@@ -583,6 +656,20 @@
       }).join('');
     }
 
+    // Renamed / possibly renamed dimensions, mirroring report.py compare_to_html (#953).
+    var renameHtml = '', nameA = esc(cmp.a.name), nameB = esc(cmp.b.name);
+    var pairedHtml = (cmp.renamed_dimensions || []).map(function (r) {
+      return '<li><strong>' + esc(r.a) + '</strong> (' + nameA + ') was compared as one with <strong>' + esc(r.b) +
+        '</strong> (' + nameB + ') because of --rename</li>';
+    }).join('');
+    if (pairedHtml) renameHtml += '<section class="flags"><h2>Compared as one</h2><ul>' + pairedHtml + '</ul></section>';
+    var suggestedHtml = (cmp.possible_renames || []).map(function (r) {
+      return '<li><strong>' + esc(r.a) + '</strong> (' + nameA + ') and <strong>' + esc(r.b) + '</strong> (' + nameB +
+        ') look like the same dimension (' + esc(E.renameEvidence(r)) + '); compare them as one with <code>--rename ' +
+        esc(r.a) + '=' + esc(r.b) + '</code></li>';
+    }).join('');
+    if (suggestedHtml) renameHtml += '<section class="flags"><h2>Possible renames</h2><ul>' + suggestedHtml + '</ul></section>';
+
     var flagsHtml = '';
     if (cmp.flags.length) {
       var items = cmp.flags.map(function (f) { return '<li>' + esc(f) + '</li>'; }).join('');
@@ -650,7 +737,7 @@
       '<title>Fair Code - Representation Drift</title><style>' + style + '</style></head><body>' +
       '<button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>' +
       '<div class="head"><h1>Representation Drift (A → B)</h1></div>' +
-      summaryHtml + cardsHtml + flagsHtml + proxyHtml + onlyHtml +
+      summaryHtml + cardsHtml + flagsHtml + renameHtml + proxyHtml + onlyHtml +
       '<p style="color:var(--muted);font-size:12px;margin-top:32px">' +
       'Generated by <a href="https://github.com/yakew7/Fair-Code">Fair Code</a> - diagnostic only.</p>' +
       '</body></html>';
@@ -674,14 +761,28 @@
       out += csvRow([cd.name, cd.kind_mismatch, cd.dimension_score_a, cd.dimension_score_b,
         cd.dimension_score_delta, cd.psi, cd.tvd, cd.drift_level]);
     });
+    if (cmp.removed_dimensions.length || cmp.added_dimensions.length) {
+      out += csvRow([]) + csvRow(['dimension', 'present_in']);
+      cmp.removed_dimensions.forEach(function (n) { out += csvRow([n, 'a_only']); });
+      cmp.added_dimensions.forEach(function (n) { out += csvRow([n, 'b_only']); });
+    }
+    if (cmp.possible_renames && cmp.possible_renames.length) {
+      out += csvRow([]) + csvRow(['dimension_a', 'dimension_b', 'overlap', 'reason']);
+      cmp.possible_renames.forEach(function (r) { out += csvRow([r.a, r.b, r.overlap, r.reason || 'labels']); });
+    }
+    if (cmp.renamed_dimensions && cmp.renamed_dimensions.length) {
+      out += csvRow([]) + csvRow(['renamed_dimension_a', 'renamed_dimension_b']);
+      cmp.renamed_dimensions.forEach(function (r) { out += csvRow([r.a, r.b]); });
+    }
     out += csvRow([]) + csvRow(['flag']);
     cmp.flags.forEach(function (f) { out += csvRow([f]); });
     [['proxy_hints_a', 'A'], ['proxy_hints_b', 'B']].forEach(function (k) {
       if (cmp[k[0]] && cmp[k[0]].length) {
         var adj = cmp[k[0]].some(function (h) { return h.p_adjusted !== undefined; });
-        out += csvRow([]) + csvRow(['dataset', 'proxy_hint_a', 'proxy_hint_b', 'p_value', 'cramers_v'].concat(adj ? ['p_adjusted'] : []));
+        var meth = cmp[k[0]].some(function (h) { return h.p_method !== undefined; });
+        out += csvRow([]) + csvRow(['dataset', 'proxy_hint_a', 'proxy_hint_b', 'p_value', 'cramers_v'].concat(adj ? ['p_adjusted'] : [], meth ? ['p_method'] : [], ['n_tests', 'low_expected']));
         cmp[k[0]].forEach(function (h) {
-          out += csvRow([k[1], h.a, h.b, h.p_value, h.cramers_v].concat(adj ? [h.p_adjusted] : []));
+          out += csvRow([k[1], h.a, h.b, h.p_value, h.cramers_v].concat(adj ? [h.p_adjusted] : [], meth ? [h.p_method] : [], [h.n_tests, !!h.low_expected]));
         });
       }
     });
@@ -708,35 +809,43 @@
   // `faircode compare --proxy-hints`; attached to currentCmp so the HTML
   // report, JSON copy and CSV include them.
 
-  // Significance level for the proxy check (--proxy-alpha, #786): blank means
-  // the 0.05 default; anything outside (0, 1] is rejected like the CLI does.
-  function readProxyAlpha(input, host) {
-    var raw = input.value.trim();
-    if (raw === '') return 0.05;
-    var a = parseFloat(raw);
-    if (!(a > 0 && a <= 1)) {
-      host.innerHTML = '<p class="profiler-error">Significance level must be in (0, 1].</p>';
-      return null;
-    }
-    return a;
-  }
 
   async function renderCompareProxyHints() {
     if (!currentCmp || !currentProfiles) return;
     var alpha = readProxyAlpha(document.getElementById('compareProxyAlphaInput'), proxyResultsEl);
     if (alpha === null) return;
     var correction = document.getElementById('compareProxyCorrectionInput').value || null;
-    var heldA = null, heldB = null;
+    var exact = document.getElementById('compareProxyExactInput').checked;
+    var exactSettings = {};
+    try {
+      // Only read when the exact box is ticked (the inputs are disabled otherwise); a bad value is reported on the
+      // input itself, not in the results area (#962).
+      if (exactControls().box.checked) {
+        exactSettings = E.parseExactSettings(exactControls().perm.value, exactControls().rows.value);
+      }
+      clearExactError();
+    } catch (err) {
+      showExactError(err.message);
+      return;
+    }
+    var heldA = null, heldB = null, heldNotes = [];
     try {
       var specsA = await heldOutA.collect(), specsB = await heldOutB.collect();
-      if (specsA.length) heldA = await E.buildHeldOut(specsA, slot.A.table);
-      if (specsB.length) heldB = await E.buildHeldOut(specsB, slot.B.table);
+      if (specsA.length) heldA = await E.buildHeldOut(specsA, slot.A.table, heldNotes, currentOpts.max_categorical_card);
+      if (specsB.length) heldB = await E.buildHeldOut(specsB, slot.B.table, heldNotes, currentOpts.max_categorical_card);
+      heldSpecsA = specsA;
+      heldSpecsB = specsB;
     } catch (err) {
+      heldSpecsA = [];
+      heldSpecsB = [];
       proxyResultsEl.innerHTML = '<p class="profiler-error">' + esc(err.message) + '</p>';
       return;
     }
-    currentCmp.proxy_hints_a = E.proxyHints(slot.A.table, currentProfiles.A.dimensions, alpha, heldA, correction);
-    currentCmp.proxy_hints_b = E.proxyHints(slot.B.table, currentProfiles.B.dimensions, alpha, heldB, correction);
+    currentProxySettings = { alpha: alpha, correction: correction, exact: exact,
+                             permutations: exactSettings.permutations, maxRows: exactSettings.maxRows };
+    setSkipNotes(currentCmp, specsA.concat(specsB));
+    currentCmp.proxy_hints_a = E.proxyHints(slot.A.table, currentProfiles.A.dimensions, alpha, heldA, correction, currentOpts.max_age, currentOpts.age_reference_year, exact, exactSettings.permutations, exactSettings.maxRows);
+    currentCmp.proxy_hints_b = E.proxyHints(slot.B.table, currentProfiles.B.dimensions, alpha, heldB, correction, currentOpts.max_age, currentOpts.age_reference_year, exact, exactSettings.permutations, exactSettings.maxRows);
     proxyResultsEl.innerHTML = [['proxy_hints_a', 'A'], ['proxy_hints_b', 'B']].map(function (k) {
       var hints = currentCmp[k[0]];
       return '<h4 class="proxy-hint-side">Dataset ' + k[1] + '</h4>' + (hints.length
@@ -744,10 +853,11 @@
             return '<div class="proxy-hint-row"><span class="proxy-hint-pair">' + esc(h.a) + ' × ' +
               esc(h.b) + '</span><span class="proxy-hint-stats">p ' + h.p_value.toExponential(2) +
               ' · Cramer’s V ' + h.cramers_v.toFixed(4) +
-        (h.p_adjusted !== undefined ? ' · adj p ' + h.p_adjusted.toExponential(2) : '') + '</span></div>';
+        (h.p_adjusted !== undefined ? ' · adj p ' + h.p_adjusted.toExponential(2) + E.proxyFamily(h) : '') +
+        (h.low_expected ? ' · small cells ⚠' : '') + '</span></div>';
           }).join('') + '</div>'
         : '<p class="section-note">No column pairs are significantly associated (p &lt; ' + alpha + ').</p>');
-    }).join('');
+    }).join('') + heldNotes.map(function (n) { return '<p class="section-note">' + esc(n) + '</p>'; }).join('');
   }
 
   function compareReportBaseName() {
@@ -769,43 +879,60 @@
     URL.revokeObjectURL(url);
   }
 
-  function flashButton(btn, msg) {
-    var original = btn.textContent;
-    btn.textContent = msg;
-    btn.disabled = true;
-    setTimeout(function () {
-      btn.textContent = original;
-      btn.disabled = false;
-    }, 1500);
-  }
 
-  function fallbackCopy(text) {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
-    document.body.removeChild(ta);
-    return ok;
-  }
 
   async function buildCompareProvenance() {
     var hashA = await fileDigest(slot.A && slot.A.file);
     var hashB = await fileDigest(slot.B && slot.B.file);
-    var provenance = {
-      faircode_version: FAIRCODE_VERSION,
-      engine: 'js',
-      dataset_hash_a: hashA.digest,
-      dataset_hash_b: hashB.digest,
-      params: E.publicParams(currentOpts),
-      overrides: Object.assign({}, currentOverrides)
-    };
+    // Key order matches faircode/provenance.py: each digest, its note, then its encoding.
+    var provenance = { faircode_version: FAIRCODE_VERSION, engine: 'js', dataset_hash_a: hashA.digest };
     if (hashA.note !== null) provenance.dataset_hash_a_note = hashA.note;
+    if (slot.A && slot.A.encoding) provenance.encoding_a = slot.A.encoding;
+    if (slot.A && slot.A.sheet) { provenance.sheet_a = slot.A.sheet.sheet; provenance.sheets_ignored_a = slot.A.sheet.sheets_ignored; }
+    provenance.dataset_hash_b = hashB.digest;
     if (hashB.note !== null) provenance.dataset_hash_b_note = hashB.note;
+    if (slot.B && slot.B.encoding) provenance.encoding_b = slot.B.encoding;
+    if (slot.B && slot.B.sheet) { provenance.sheet_b = slot.B.sheet.sheet; provenance.sheets_ignored_b = slot.B.sheet.sheets_ignored; }
+    provenance.params = E.publicParams(currentOpts, currentCmp && currentCmp.proxy_hints_a ? currentProxySettings : null);
+    if (Object.keys(currentRenames).length) provenance.params.renames = Object.assign({}, currentRenames);
+    provenance.overrides = Object.assign({}, currentOverrides);
+    if (currentCmp && currentCmp.proxy_hints_a) {
+      if (heldSpecsA.length) provenance.proxy_hints_with_a = await heldOutEntries(heldSpecsA);
+      if (heldSpecsB.length) provenance.proxy_hints_with_b = await heldOutEntries(heldSpecsB);
+    }
     return provenance;
+  }
+
+  // The faircode command that reproduces this comparison (#915).
+  function currentCompareCliCommand() {
+    var withHints = !!(currentCmp && currentCmp.proxy_hints_a && currentProxySettings);
+    return E.buildCliCommand({
+      kind: 'compare',
+      sample: !!(slot.A && !slot.A.file && slot.A.name === 'sample-baseline.csv'),
+      files: [slot.A && slot.A.file ? slot.A.file.name : 'a.csv', slot.B && slot.B.file ? slot.B.file.name : 'b.csv'],
+      opts: currentOpts,
+      overrides: currentOverrides,
+      encoding: encodingSelect ? encodingSelect.value : 'auto',
+      renames: currentRenames,
+      outputs: document.getElementById('compareCsvProvenanceInput').checked
+        ? { csv: 'compare-drift.csv', csvProvenance: true } : {},
+      proxy: withHints ? currentProxySettings : null,
+      held: { a: withHints ? heldSpecsA : [], b: withHints ? heldSpecsB : [] }
+    });
+  }
+
+  function copyCompareCliCommand() {
+    if (!currentCmp) return;
+    var text = currentCompareCliCommand();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        flashButton(copyCliBtn, '✓ Copied');
+      }, function () {
+        flashButton(copyCliBtn, fallbackCopy(text) ? '✓ Copied' : 'Copy failed');
+      });
+    } else {
+      flashButton(copyCliBtn, fallbackCopy(text) ? '✓ Copied' : 'Copy failed');
+    }
   }
 
   async function copyCompareResultAsJSON() {
@@ -859,6 +986,18 @@
 
   wireSlot('A', dropA, fileA, nameAEl);
   wireSlot('B', dropB, fileB, nameBEl);
+
+  // Re-read both loaded text files when the encoding changes (#857).
+  if (encodingSelect) {
+    encodingSelect.addEventListener('change', function () {
+      [['A', dropA, nameAEl], ['B', dropB, nameBEl]].forEach(function (s3) {
+        var loaded = slot[s3[0]];
+        if (loaded && loaded.file && !/\.xlsx$/i.test(loaded.file.name)) {
+          readFile(s3[0], loaded.file, s3[1], s3[2]);
+        }
+      });
+    });
+  }
   sampleBtn.addEventListener('click', loadSampleComparison);
   if (new URLSearchParams(window.location.search).get('demo') === 'compare') {
     loadSampleComparison();
@@ -867,4 +1006,6 @@
   proxyBtn.addEventListener('click', renderCompareProxyHints);
   downloadHtmlBtn.addEventListener('click', downloadCompareHtmlReport);
   copyJsonBtn.addEventListener('click', copyCompareResultAsJSON);
+  if (copyCliBtn) copyCliBtn.addEventListener('click', copyCompareCliCommand);
+  wireExactInputs();
 })();

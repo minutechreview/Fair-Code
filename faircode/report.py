@@ -11,6 +11,7 @@ import csv
 import html
 import io
 import json
+import re
 
 WIDTH = 62
 DISPLAY_GROUPS = 12  # cap rows shown per dimension; full data stays in the result
@@ -23,7 +24,7 @@ def to_json(result: dict, indent: int = 2, provenance: dict | None = None) -> st
     (SPEC section 10) so an exported report says which file, which faircode
     version, and which resolved thresholds produced it. It is attached here
     rather than inside profile() on purpose: the Python engine and the JS port
-    are compared with `==` in tests/test_js_parity.py, so a local file name
+    are compared with `==` in tests/test_js_parity_*.py, so a local file name
     cannot live in the engine result. The web export mirrors the same field
     names at the same boundary.
 
@@ -73,10 +74,31 @@ def _write_provenance_rows(writer, provenance: dict) -> None:
         writer.writerow([key, value])
 
 
-def _adj_text(h) -> str:
-    """", adj p=..." suffix for a hint that carries a multiple-comparison
-    adjusted p-value (#806); empty for the default uncorrected hints."""
-    return f", adj p={h['p_adjusted']:.4g}" if "p_adjusted" in h else ""
+def _dim_score_text(d: dict) -> str:
+    """A dimension with no groups was not measured; its stored score of 0 is a
+    placeholder, so show "not measured" rather than a failing 0/100 (#838)."""
+    return "not measured" if d["n_groups"] == 0 else f"{d['dimension_score']}/100"
+
+
+def _hint_notes(h) -> str:
+    """Suffix for a proxy hint line: ", adj p=..." when it carries a
+    multiple-comparison adjusted p-value (#806), and ", small cells" when
+    over 20% of its expected counts are under 5 so the chi-squared p-value is
+    unreliable (#810); with `--proxy-exact` the note names the exact method that
+    replaced the p-value instead (#861)."""
+    text = ""
+    if "p_adjusted" in h:
+        text = f", adj p={h['p_adjusted']:.4g}"
+        if "n_tests" in h:
+            text += f" (m={h['n_tests']} pairs)"
+    if h.get("low_expected"):
+        if h.get("p_method") in ("fisher", "permutation"):
+            text += f", small cells ({h['p_method']} exact p)"
+        elif h.get("p_method") == "chi2-capped":
+            text += ", small cells (too large for the exact fallback, p-value unreliable)"
+        else:
+            text += ", small cells (p-value unreliable)"
+    return text
 
 
 def _write_proxy_rows(writer, hints, side=None) -> None:
@@ -84,11 +106,15 @@ def _write_proxy_rows(writer, hints, side=None) -> None:
     one row per hint (a `dataset` column is added only for compare's A/B)."""
     prefix = ["dataset"] if side else []
     adjusted = any("p_adjusted" in h for h in hints)
+    method = any("p_method" in h for h in hints)
     writer.writerow(prefix + ["proxy_hint_a", "proxy_hint_b", "p_value", "cramers_v"]
-                    + (["p_adjusted"] if adjusted else []))
+                    + (["p_adjusted"] if adjusted else []) + (["p_method"] if method else [])
+                    + ["n_tests", "low_expected"])
     for h in hints:
         writer.writerow(([side] if side else []) + [h["a"], h["b"], h["p_value"], h["cramers_v"]]
-                        + ([h.get("p_adjusted")] if adjusted else []))
+                        + ([h.get("p_adjusted")] if adjusted else [])
+                        + ([h.get("p_method")] if method else [])
+                        + [h.get("n_tests"), h.get("low_expected", False)])
 
 
 def to_csv(result: dict, provenance: dict | None = None) -> str:
@@ -136,6 +162,19 @@ def to_csv(result: dict, provenance: dict | None = None) -> str:
     return buf.getvalue()
 
 
+_CONTROL_CHARS = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f]")
+
+
+def _visible(text: str) -> str:
+    """Replace C0/C1 control characters (tab excepted) with visible \\xNN escapes.
+
+    Terminal output only: a dataset value holding an ANSI/OSC sequence must not
+    recolour or rewrite the audit it appears in (#845). JSON/CSV/HTML keep the
+    raw value.
+    """
+    return _CONTROL_CHARS.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+
+
 def _bar(share: float, width: int = 24) -> str:
     filled = round(share * width)
     return "█" * filled + "·" * (width - filled)
@@ -143,7 +182,9 @@ def _bar(share: float, width: int = 24) -> str:
 
 def to_terminal(result: dict) -> str:
     lines: list[str] = []
-    add = lines.append
+
+    def add(line: str) -> None:
+        lines.append(_visible(line))
 
     add("=" * WIDTH)
     add("FAIR CODE - DATASET REPRESENTATION PROFILE")
@@ -165,7 +206,7 @@ def to_terminal(result: dict) -> str:
     for d in result["dimensions"]:
         add("-" * WIDTH)
         title = f"{d['name']}  [{d['kind']}]"
-        add(f"{title}    score {d['dimension_score']}/100")
+        add(f"{title}    score {_dim_score_text(d)}")
         add("-" * WIDTH)
         shown = d["groups"][:DISPLAY_GROUPS]
         for g in shown:
@@ -214,7 +255,7 @@ def to_terminal(result: dict) -> str:
         add("=" * WIDTH)
         for h in result["proxy_hints"]:
             add(f"  ~ {h['a']} ↔ {h['b']}  "
-                f"(χ² p={h['p_value']:.4g}, Cramér's V={h['cramers_v']:.2f}{_adj_text(h)})")
+                f"(χ² p={h['p_value']:.4g}, Cramér's V={h['cramers_v']:.2f}{_hint_notes(h)})")
         add("")
 
     add("=" * WIDTH)
@@ -248,7 +289,9 @@ def _dataset_score_line(dataset: dict) -> str:
 def compare_to_terminal(cmp: dict) -> str:
     """Render a compare() result (SPEC section 8) as terminal text."""
     lines: list[str] = []
-    add = lines.append
+
+    def add(line: str) -> None:
+        lines.append(_visible(line))
     a, b = cmp["a"], cmp["b"]
 
     add("=" * WIDTH)
@@ -283,7 +326,7 @@ def compare_to_terminal(cmp: dict) -> str:
         add("-" * WIDTH)
         for g in cd["groups"][:DISPLAY_GROUPS]:
             tag = {"appeared": "  (appeared)", "disappeared": "  (disappeared)",
-                   "shifted": ""}[g["status"]]
+                   "shifted": "", "unchanged": ""}[g["status"]]
             add(f"  {g['label'][:18]:<18} {g['share_a'] * 100:5.1f}% → "
                 f"{g['share_b'] * 100:5.1f}%  "
                 f"({_strip_neg_zero(g['share_delta'] * 100):+5.1f} pp){tag}")
@@ -305,7 +348,7 @@ def compare_to_terminal(cmp: dict) -> str:
             add("=" * WIDTH)
             for h in cmp[key]:
                 add(f"  ~ {h['a']} ↔ {h['b']}  "
-                    f"(χ² p={h['p_value']:.4g}, Cramér's V={h['cramers_v']:.2f}{_adj_text(h)})")
+                    f"(χ² p={h['p_value']:.4g}, Cramér's V={h['cramers_v']:.2f}{_hint_notes(h)})")
             add("")
 
     if cmp["flags"]:
@@ -328,6 +371,11 @@ def compare_to_csv(cmp: dict, provenance: dict | None = None) -> str:
     Group columns: dimension, kind_a, kind_b, label, share_a, share_b,
     share_delta, status. A dimension whose comparison was skipped for a kind
     mismatch (kind_mismatch: true) has no groups rows, only its summary row.
+    A dimension detected in only one dataset has no group or summary row; when
+    there are any, a `dimension,present_in` section lists them (`a_only` /
+    `b_only`) so a spreadsheet can filter and count them (#842). When rename
+    suggestions exist, a `dimension_a,dimension_b,overlap,reason` section follows (#896, #902), then a
+    `renamed_dimension_a,renamed_dimension_b` section when `--rename` paired dimensions (#920).
     """
     buf = io.StringIO()
     writer = _SafeCsvWriter(buf)
@@ -351,6 +399,23 @@ def compare_to_csv(cmp: dict, provenance: dict | None = None) -> str:
             cd["name"], cd["kind_mismatch"], cd["dimension_score_a"], cd["dimension_score_b"],
             cd["dimension_score_delta"], cd.get("psi"), cd.get("tvd"), cd.get("drift_level"),
         ])
+    one_sided = ([(name, "a_only") for name in cmp.get("removed_dimensions", [])]
+                 + [(name, "b_only") for name in cmp.get("added_dimensions", [])])
+    if one_sided:
+        writer.writerow([])
+        writer.writerow(["dimension", "present_in"])
+        for name, side in one_sided:
+            writer.writerow([name, side])
+    if cmp.get("possible_renames"):
+        writer.writerow([])
+        writer.writerow(["dimension_a", "dimension_b", "overlap", "reason"])
+        for r in cmp["possible_renames"]:
+            writer.writerow([r["a"], r["b"], format(r["overlap"], "g"), r.get("reason", "labels")])  # "1", like JS, not "1.0"
+    if cmp.get("renamed_dimensions"):
+        writer.writerow([])
+        writer.writerow(["renamed_dimension_a", "renamed_dimension_b"])
+        for r in cmp["renamed_dimensions"]:
+            writer.writerow([r["a"], r["b"]])
     writer.writerow([])
     writer.writerow(["flag"])
     for flag in cmp["flags"]:
@@ -437,7 +502,7 @@ def to_html(result: dict) -> str:
         dim_blocks.append(
             f'<section class="dim"><h2>{esc(d["name"])} '
             f'<span class="kind">{esc(d["kind"])}</span> '
-            f'<span class="score">{d["dimension_score"]}/100</span>{meta_html}</h2>'
+            f'<span class="score">{_dim_score_text(d)}</span>{meta_html}</h2>'
             f'<table><caption>Group breakdown - {esc(d["name"])}</caption>'
             f'<thead><tr><th scope="col">Group</th><th scope="col" class="num">Share</th>'
             f'<th scope="col" class="num">95% CI</th><th scope="col" class="num">Count</th>'
@@ -454,7 +519,7 @@ def to_html(result: dict) -> str:
     if result.get("proxy_hints"):
         items = "".join(
             f'<li>{esc(h["a"])} ↔ {esc(h["b"])} '
-            f'(χ² p={h["p_value"]:.4g}, Cramér\'s V={h["cramers_v"]:.2f}{_adj_text(h)})</li>'
+            f'(χ² p={h["p_value"]:.4g}, Cramér\'s V={h["cramers_v"]:.2f}{_hint_notes(h)})</li>'
             for h in result["proxy_hints"]
         )
         proxy_html = (
@@ -644,13 +709,31 @@ def compare_to_html(cmp: dict) -> str:
         items = "".join(f"<li>{esc(f)}</li>" for f in cmp["flags"])
         flags_html = f'<section class="flags"><h2>Drift Flags</h2><ul>{items}</ul></section>'
 
+    # Renamed / possibly renamed dimensions (#953): the structured version of the rename flags.
+    from .compare import rename_evidence
+    rename_html = ""
+    name_a, name_b = esc(cmp["a"]["name"]), esc(cmp["b"]["name"])
+    paired = "".join(
+        f'<li><strong>{esc(r["a"])}</strong> ({name_a}) was compared as one with '
+        f'<strong>{esc(r["b"])}</strong> ({name_b}) because of --rename</li>'
+        for r in cmp.get("renamed_dimensions", []))
+    if paired:
+        rename_html += f'<section class="flags"><h2>Compared as one</h2><ul>{paired}</ul></section>'
+    suggested = "".join(
+        f'<li><strong>{esc(r["a"])}</strong> ({name_a}) and <strong>{esc(r["b"])}</strong> ({name_b}) '
+        f'look like the same dimension ({esc(rename_evidence(r))}); compare them as one with '
+        f'<code>--rename {esc(r["a"])}={esc(r["b"])}</code></li>'
+        for r in cmp.get("possible_renames", []))
+    if suggested:
+        rename_html += f'<section class="flags"><h2>Possible renames</h2><ul>{suggested}</ul></section>'
+
     # Proxy Hints (A/B)
     proxy_html = ""
     for key, label in (("proxy_hints_a", "A"), ("proxy_hints_b", "B")):
         if cmp.get(key):
             items = "".join(
                 f'<li>{esc(h["a"])} ↔ {esc(h["b"])} '
-                f'(χ² p={h["p_value"]:.4g}, Cramér\'s V={h["cramers_v"]:.2f}{_adj_text(h)})</li>'
+                f'(χ² p={h["p_value"]:.4g}, Cramér\'s V={h["cramers_v"]:.2f}{_hint_notes(h)})</li>'
                 for h in cmp[key]
             )
             proxy_html += (
@@ -726,6 +809,7 @@ def compare_to_html(cmp: dict) -> str:
         f'{summary_html}'
         f'{"".join(cards_html)}'
         f'{flags_html}'
+        f'{rename_html}'
         f'{proxy_html}'
         f'{only_html}'
         '<p style="color:var(--muted);font-size:12px;margin-top:32px">'

@@ -12,7 +12,7 @@ import re
 
 import pandas as pd
 
-from .detect import MAX_CATEGORICAL_CARD, VALID_KINDS, detect_columns
+from .detect import MAX_CATEGORICAL_CARD, VALID_KINDS, detect_columns, normalize_keywords
 
 # ── Defaults (SPEC section 7) ───────────────────────────────────────────────
 MIN_SHARE_THRESHOLD = 0.05
@@ -24,8 +24,12 @@ AGE_BANDS = [0, 18, 30, 45, 60, 75]  # left-closed edges; final band is "75+"
 DATE_SAMPLE_SIZE = 200  # deterministic whole-column sample for date detection
 MAX_DIMENSION_GROUPS = 50  # drop identifier/date-like columns (geography exempt)
 MIN_GROUP_SIZE = 100  # warn when a subgroup has fewer than N rows (default: 100)
+MAX_AGE = 120  # numeric ages above this are reported as implausible, not banded (SPEC 2)
+BIRTH_YEAR_MIN = 1900  # with age_reference_year, whole numbers from here up to it are birth years
 
-_DATE_RE = re.compile(r"\d{1,4}[/-]\d{1,2}[/-]\d{1,4}")
+# ASCII digits only, like the JS engine (#836): Python's `\d` also matches
+# Arabic-Indic/fullwidth digits, which the browser regex does not.
+_DATE_RE = re.compile(r"[0-9]{1,4}[/-][0-9]{1,2}[/-][0-9]{1,4}")
 
 # 95% two-sided normal quantile, shared verbatim with the JS port so both engines
 # return identical Wilson bounds (SPEC section 3).
@@ -62,6 +66,9 @@ _DEFAULT_OPTS = {
     "min_group_size": MIN_GROUP_SIZE,  # warn when a subgroup has fewer than N rows
     "max_categorical_card": MAX_CATEGORICAL_CARD,
     "max_dimension_groups": MAX_DIMENSION_GROUPS,
+    "max_age": MAX_AGE,  # ages above this are not banded; flagged instead (SPEC 2)
+    "age_reference_year": None,  # convert birth years in age columns to ages as of this year
+    "keywords": None,    # extra column-name vocabulary {kind: [words]} for detection (SPEC 1)
     "cross": None,       # [colA, colB] to force the intersection pair (SPEC 4)
     "reference": None,   # {column: {group: expected_share}} baseline (SPEC 8)
 }
@@ -91,6 +98,14 @@ def _validate_opts(o: dict) -> None:
     max_dimension_groups = o.get("max_dimension_groups")
     if max_dimension_groups is not None and max_dimension_groups < 1:
         raise ValueError(f"max_dimension_groups must be >= 1, got {max_dimension_groups!r}")
+    max_age = o.get("max_age")
+    if max_age is not None and not max_age > 0:
+        raise ValueError(f"max_age must be > 0, got {max_age!r}")
+    o["keywords"] = normalize_keywords(o.get("keywords"))
+    ref_year = o.get("age_reference_year")
+    if ref_year is not None and (ref_year != int(ref_year) or ref_year < BIRTH_YEAR_MIN):
+        raise ValueError(
+            f"age_reference_year must be a whole year >= {BIRTH_YEAR_MIN}, got {ref_year!r}")
 
 
 def _resolve_opts(opts) -> dict:
@@ -132,18 +147,54 @@ def _looks_like_dates(series) -> bool:
 
 
 
-def _age_to_numeric(value):
-    """Coerce one age cell to a numeric lower-bound, or None."""
+def _raw_age_to_numeric(value):
+    """Coerce one age cell to a finite numeric value, or None."""
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
     if isinstance(value, (int, float)):
         numeric = float(value)
     else:
-        match = re.search(r"[+-]?\d+(?:\.\d+)?", str(value))
+        match = re.search(r"[+-]?[0-9]+(?:\.[0-9]+)?", str(value))
         if match is None:
             return None
         numeric = float(match.group())
-    return numeric if math.isfinite(numeric) and numeric >= AGE_BANDS[0] else None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _age_to_numeric(value):
+    """Coerce one age cell to a numeric lower-bound, or None."""
+    numeric = _raw_age_to_numeric(value)
+    return numeric if numeric is not None and numeric >= AGE_BANDS[0] else None
+
+
+def _age_numbers(values, max_age=MAX_AGE, reference_year=None):
+    """Per-cell numeric ages with implausible ones removed, plus how many there were.
+
+    An age above `max_age` (150, 200, a mistyped birth year) or a negative
+    sentinel (-1, -9) is a data-quality problem, not a valid age band: it
+    comes back as None and is counted in the second return value so the
+    profile can flag it (#840, #863).
+
+    With `reference_year`, a whole number from 1900 up to that year is read as
+    a birth year and becomes `reference_year - value` before the checks, so a
+    `yob` column profiles as ages instead of all implausible (#862).
+    """
+    raw_nums = [_raw_age_to_numeric(v) for v in values]
+    if reference_year is not None:
+        raw_nums = [
+            float(reference_year - n)
+            if n is not None and BIRTH_YEAR_MIN <= n <= reference_year and n == int(n) else n
+            for n in raw_nums
+        ]
+    has_negative = any(n is not None and n < AGE_BANDS[0] for n in raw_nums)
+    implausible = sum(
+        1 for n in raw_nums if n is not None and (n < AGE_BANDS[0] or n > max_age)
+    )
+    nums = [
+        n if (n is not None and AGE_BANDS[0] <= n <= max_age) else None
+        for n in raw_nums
+    ]
+    return nums, implausible, has_negative
 
 
 def _is_categorical_age_sentinel(value) -> bool:
@@ -158,7 +209,7 @@ def _is_categorical_age_sentinel(value) -> bool:
     test_negative_age_sentinels_are_missing_instead_of_an_elderly_group)."""
     if value is None or isinstance(value, (int, float)):
         return False
-    return re.search(r"[+-]?\d+(?:\.\d+)?", str(value)) is None
+    return re.search(r"[+-]?[0-9]+(?:\.[0-9]+)?", str(value)) is None
 
 
 def _age_band(num) -> str | None:
@@ -242,17 +293,18 @@ def _analyze_groups(labels_counts: dict, n_total: int, null_count: int,
 
 
 def _dimension(df: pd.DataFrame, name: str, kind: str,
-               min_share=MIN_SHARE_THRESHOLD, min_group_size=MIN_GROUP_SIZE) -> dict:
+               min_share=MIN_SHARE_THRESHOLD, min_group_size=MIN_GROUP_SIZE,
+               max_age=MAX_AGE, age_reference_year=None) -> dict:
     col = df[name]
     n_total = len(df)
     skewness = None
 
     if kind == "age" and not _looks_like_dates(col):
-        nums = [_age_to_numeric(v) for v in col]
+        nums, implausible, has_negative = _age_numbers(col, max_age, age_reference_year)
         numeric_vals = [n for n in nums if n is not None]
         # Numeric age → bands; if nothing parsed numerically, fall back to raw.
-        if numeric_vals:
-            skewness = _skewness(numeric_vals)
+        if numeric_vals or implausible:
+            skewness = _skewness(numeric_vals) if numeric_vals else None
             bands = [_age_band(n) for n in nums]
             null_count = 0
             counts: dict = {}
@@ -272,11 +324,17 @@ def _dimension(df: pd.DataFrame, name: str, kind: str,
                     null_count += 1
             result = _analyze_groups(counts, n_total, null_count, skewness, min_share, min_group_size)
             result.update({"name": name, "kind": kind})
+            if implausible:
+                result["implausible_values"] = implausible
+                if has_negative:
+                    result["has_negative_ages"] = True
             return result
 
     # Categorical path (sex, race, geography, generic categorical, non-numeric age).
     null_count = int(col.isna().sum())
-    vc = col.dropna().value_counts()
+    # astype(str): a Categorical would otherwise list unused categories as 0-row groups (#994), and the
+    # number 1 and the string "1" would be two groups with one label (#993); the web keys on text too.
+    vc = col.dropna().astype(str).value_counts()
     counts = {label: int(c) for label, c in vc.items()}
     result = _analyze_groups(counts, n_total, null_count, skewness, min_share, min_group_size)
     result.update({"name": name, "kind": kind})
@@ -295,7 +353,8 @@ def _pick_cross(dims: list[dict], cross) -> tuple:
 
 
 def _intersections(df: pd.DataFrame, dims: list[dict],
-                   intersection_floor=INTERSECTION_FLOOR, cross=None) -> list[dict]:
+                   intersection_floor=INTERSECTION_FLOOR, cross=None,
+                   max_age=MAX_AGE, age_reference_year=None) -> list[dict]:
     if len(dims) < 2:
         return []
     a, b = _pick_cross(dims, cross)
@@ -304,8 +363,8 @@ def _intersections(df: pd.DataFrame, dims: list[dict],
 
     def labelize(name, kind):
         if kind == "age" and not _looks_like_dates(df[name]):
-            nums = [_age_to_numeric(v) for v in df[name]]
-            if any(n is not None for n in nums):
+            nums, implausible, *_ = _age_numbers(df[name], max_age, age_reference_year)
+            if implausible or any(n is not None for n in nums):
                 # Non-numeric age sentinels ("unknown", "prefer not to say")
                 # get their own categorical label here too, matching
                 # _dimension()'s main breakdown - otherwise labelize() maps
@@ -379,7 +438,8 @@ def _apply_reference(dimensions: list[dict], reference: dict,
 
 
 def _build_flags(dimensions: list[dict], intersections: list[dict],
-                 imbalance_flag=IMBALANCE_FLAG, missing_flag=MISSING_FLAG) -> list[str]:
+                 imbalance_flag=IMBALANCE_FLAG, missing_flag=MISSING_FLAG,
+                 max_age=MAX_AGE) -> list[str]:
     flags: list[str] = []
     for d in dimensions:
         for g in d["groups"]:
@@ -404,6 +464,19 @@ def _build_flags(dimensions: list[dict], intersections: list[dict],
             flags.append(
                 f"{d['name']}: {d['missing_pct'] * 100:.1f}% of values are missing"
             )
+        if d.get("implausible_values"):
+            if d.get("has_negative_ages"):
+                flags.append(
+                    f"{d['name']}: {d['implausible_values']} sentinel/implausible age value(s) "
+                    f"(negative or above {max_age:g}) were treated as missing, not banded "
+                    f"(a mistyped age, birth year, or sentinel code?)"
+                )
+            else:
+                flags.append(
+                    f"{d['name']}: {d['implausible_values']} implausible age value(s) "
+                    f"above {max_age:g} were treated as missing, not banded "
+                    f"(a mistyped age or a birth year?)"
+                )
     for inter in intersections:
         a, b = inter["dims"]
         for cell in inter["cells"]:
@@ -414,10 +487,22 @@ def _build_flags(dimensions: list[dict], intersections: list[dict],
     return flags
 
 
+# Appended to `flags` when nothing was recognised by name (#847). Mirror in
+# assets/profiler-engine.js.
+NO_KIND_DETECTED_FLAG = (
+    "No column name matched sex, race, age or geography, so every dimension is a plain "
+    "categorical (ages are not banded, geography is not recognised). If a column is one of "
+    "these, map it by hand: --map COL=KIND, or the column-mapping control on the web."
+)
+
+
 _REF_COLUMN_ALIASES = ("column", "dimension", "dim")
 _REF_GROUP_ALIASES = ("group", "value", "label", "category")
 _REF_SHARE_ALIASES = ("share", "expected", "expected_share", "proportion",
                       "percent", "pct")
+
+
+_REFERENCE_SHARE = re.compile(r"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?", re.ASCII)
 
 
 def parse_reference(df: pd.DataFrame) -> dict:
@@ -456,9 +541,15 @@ def parse_reference(df: pd.DataFrame) -> dict:
         already_scaled = isinstance(value, str) and value.strip().endswith("%")
         if already_scaled:
             value = value.strip()[:-1]
+        # Only plain decimal numbers count (no nan, inf, 1_0 or hex), the same grammar as the web
+        # engine; a row with anything else is skipped (#1002).
+        if isinstance(value, str) and not _REFERENCE_SHARE.fullmatch(value.strip()):
+            continue
         try:
             share = float(value)
         except (TypeError, ValueError):
+            continue
+        if not math.isfinite(share):
             continue
         raw.append((str(row[col_c]).strip(), str(row[grp_c]).strip(), share, already_scaled))
 
@@ -489,8 +580,10 @@ def profile(df: pd.DataFrame, overrides=None, opts=None) -> dict:
     """
     overrides = overrides or {}
     o = _resolve_opts(opts)
-    detected = detect_columns(df, overrides, max_categorical_card=o["max_categorical_card"])
-    dimensions = [_dimension(df, d["name"], d["kind"], o["min_share"], o["min_group_size"])
+    detected = detect_columns(df, overrides, max_categorical_card=o["max_categorical_card"],
+                              keywords=o["keywords"])
+    dimensions = [_dimension(df, d["name"], d["kind"], o["min_share"], o["min_group_size"],
+                             o["max_age"], o["age_reference_year"])
                   for d in detected]
     # Drop identifier/date-like columns that exploded into many groups; geography
     # (cities, regions) legitimately has high cardinality, so it is exempt - as is
@@ -506,7 +599,8 @@ def profile(df: pd.DataFrame, overrides=None, opts=None) -> dict:
         if unknown:
             raise ValueError(
                 "cross column(s) don't match any profiled dimension: " + ", ".join(unknown))
-    intersections = _intersections(df, detected, o["intersection_floor"], o["cross"])
+    intersections = _intersections(df, detected, o["intersection_floor"], o["cross"],
+                                   o["max_age"], o["age_reference_year"])
 
     ref_flags = []
     if o["reference"]:
@@ -542,5 +636,8 @@ def profile(df: pd.DataFrame, overrides=None, opts=None) -> dict:
         "dimensions": dimensions,
         "intersections": intersections,
         "flags": _build_flags(dimensions, intersections,
-                              o["imbalance_flag"], o["missing_flag"]) + ref_flags,
+                              o["imbalance_flag"], o["missing_flag"], o["max_age"]) + ref_flags
+                 + ([NO_KIND_DETECTED_FLAG]
+                    if dimensions and not overrides
+                    and all(d["kind"] == "categorical" for d in dimensions) else []),
     }

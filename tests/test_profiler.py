@@ -341,6 +341,10 @@ def test_imbalance_flag_tunable():
     ({"missing_flag": 5.0}, "missing_flag must be between 0 and 1"),
     ({"imbalance_flag": 0.5}, "imbalance_flag must be >= 1"),
     ({"min_group_size": 0}, "min_group_size must be >= 1"),
+    ({"max_categorical_card": 0}, "max_categorical_card must be >= 2, got 0"),
+    ({"max_categorical_card": 1}, "max_categorical_card must be >= 2, got 1"),
+    ({"max_dimension_groups": 0}, "max_dimension_groups must be >= 1, got 0"),
+    ({"max_dimension_groups": -1}, "max_dimension_groups must be >= 1, got -1"),
 ])
 def test_out_of_range_tunables_raise_instead_of_contradicting_themselves(opts, message):
     # min_share=1.5 used to be accepted silently: every group flagged
@@ -504,3 +508,217 @@ def test_date_column_dropped_not_garbage():
     names = {d["name"] for d in result["dimensions"]}
     assert "DateOfBirth" not in names
     assert "sex" in names
+
+
+# --- #840: implausible ages -----------------------------------------------------
+
+def _age_frame(ages):
+    return pd.DataFrame({"sex": ["M", "F"] * (len(ages) // 2), "age": ages})
+
+
+def _age_dim(result):
+    return next(d for d in result["dimensions"] if d["name"] == "age")
+
+
+def test_implausible_ages_are_not_banded_into_the_oldest_group():
+    result = profile(_age_frame([25, 30, 41, 200]))
+    age = _age_dim(result)
+    assert "75+" not in {g["label"] for g in age["groups"]}
+    assert age["implausible_values"] == 1
+    assert age["missing_pct"] == 0.25
+    assert any("1 implausible age value(s) above 120" in f for f in result["flags"])
+
+
+def test_negative_sentinel_ages_are_flagged_with_sentinel_message():
+    """#863: negative sentinel ages are counted as implausible/sentinel values."""
+    result = profile(_age_frame([25, -1, 41, -9]))
+    age = _age_dim(result)
+    assert age["implausible_values"] == 2
+    assert age["missing_pct"] == 0.5
+    assert age["has_negative_ages"] is True
+    assert any("2 sentinel/implausible age value(s) (negative or above 120)" in f for f in result["flags"])
+
+
+
+def test_plausible_ages_have_no_implausible_field_or_flag():
+    result = profile(_age_frame([25, 30, 41, 80]))
+    assert "implausible_values" not in _age_dim(result)
+    assert not any("implausible" in f for f in result["flags"])
+
+
+def test_max_age_option_moves_the_cutoff_and_is_validated():
+    ages = [25, 30, 41, 90]
+    assert "implausible_values" not in _age_dim(profile(_age_frame(ages)))
+    assert _age_dim(profile(_age_frame(ages), None, {"max_age": 80}))["implausible_values"] == 1
+    with pytest.raises(ValueError, match="max_age"):
+        profile(_age_frame(ages), None, {"max_age": 0})
+
+
+def test_a_birth_year_column_is_flagged_not_called_all_75_plus():
+    result = profile(_age_frame([1985, 1990, 1972, 2001]))
+    age = _age_dim(result)
+    assert age["n_groups"] == 0 and age["implausible_values"] == 4
+
+
+def test_implausible_ages_are_left_out_of_the_intersection():
+    df = pd.DataFrame({"sex": ["M", "F"] * 20, "age": [25, 200] * 20})
+    result = profile(df)
+    labels = {cell["b"] for inter in result["intersections"] for cell in inter["cells"]}
+    assert "75+" not in labels
+
+
+# --- #847: column-name detection beyond English -----------------------------------
+
+@pytest.mark.parametrize("name, kind", [
+    ("sexo", "sex"), ("Género", "sex"), ("Geschlecht", "sex"), ("sexe", "sex"),
+    ("raza", "race"), ("Raça", "race"), ("Rasse", "race"), ("ethnie", "race"), ("etnia", "race"),
+    ("edad", "age"), ("Alter", "age"), ("Âge", "age"), ("idade", "age"),
+    ("Fecha de nacimiento", "age"), ("Geburtsdatum", "age"), ("date_naissance", "age"),
+    ("Bundesland", "geography"), ("país", "geography"), ("Código postal", "geography"),
+    ("ciudad", "geography"), ("PLZ", "geography"), ("ville", "geography"), ("cidade", "geography"),
+])
+def test_classify_name_understands_spanish_german_french_and_portuguese(name, kind):
+    assert classify_name(name) == kind
+
+
+@pytest.mark.parametrize("name", ["generosity", "alternative", "landing", "razor", "Straße",
+                                  "genre", "etat_civil"])
+def test_non_english_keywords_do_not_overmatch_ordinary_words(name):
+    assert classify_name(name) is None
+
+
+@pytest.mark.parametrize("name", [
+    "estado_civil", "estado civil", "EstadoCivil", "Estado Civil",
+    "marital_status", "marital status",
+    "stato_civile", "stato civile",
+    "etat_civil", "état civil",
+])
+def test_marital_status_compounds_are_not_geography(name):
+    # #855: estado alone is geography, but estado+civil (and EN/IT/FR siblings)
+    # is marital status → no keyword kind (categorical via cardinality).
+    assert classify_name(name) is None
+
+
+def test_estado_alone_stays_geography_while_estado_civil_is_categorical():
+    df = pd.DataFrame({
+        "sexo": ["H", "M", "H", "M"],
+        "estado_civil": ["soltero", "casado", "casado", "soltero"],
+        "estado": ["TX", "CA", "TX", "CA"],
+    })
+    kinds = {d["name"]: d["kind"] for d in profile(df)["dimensions"]}
+    assert kinds["sexo"] == "sex"
+    assert kinds["estado"] == "geography"
+    assert kinds["estado_civil"] == "categorical"
+
+
+def test_spanish_dataset_gets_typed_dimensions_and_banded_ages():
+    df = pd.DataFrame({"sexo": ["H", "M"] * 4, "edad": [25, 30, 41, 55, 62, 19, 33, 70],
+                       "estado": ["TX", "CA"] * 4})
+    result = profile(df)
+    kinds = {d["name"]: d["kind"] for d in result["dimensions"]}
+    assert kinds == {"sexo": "sex", "edad": "age", "estado": "geography"}
+    edad = next(d for d in result["dimensions"] if d["name"] == "edad")
+    assert all("-" in g["label"] or g["label"].endswith("+") for g in edad["groups"])
+    assert not any("No column name matched" in f for f in result["flags"])
+
+
+def test_no_recognised_kind_suggests_map():
+    df = pd.DataFrame({"colA": ["x", "y"] * 4, "colB": ["p", "q"] * 4})
+    flags = profile(df)["flags"]
+    assert any("--map COL=KIND" in f for f in flags)
+    # a hand-mapped run has already made the decision
+    assert not any("No column name matched" in f
+                   for f in profile(df, {"colA": "sex"})["flags"])
+
+
+# --- #862: birth-year columns -------------------------------------------------------
+
+def _dim(result, name):
+    return next(d for d in result["dimensions"] if d["name"] == name)
+
+
+def test_age_reference_year_converts_birth_years_to_ages():
+    df = pd.DataFrame({"sex": ["M", "F"] * 4,
+                       "yob": [1985, 1990, 1972, 2001, 1950, 2010, 40, 2090]})
+    age = _dim(profile(df, None, {"age_reference_year": 2026}), "yob")
+    labels = {g["label"]: g["count"] for g in age["groups"]}
+    assert sum(labels.values()) == 7
+    assert age["implausible_values"] == 1          # 2090 is after the reference year
+    assert "75+" in labels                          # 1950 -> 76, a real age, banded
+
+
+def test_birth_years_stay_implausible_without_a_reference_year():
+    df = pd.DataFrame({"sex": ["M", "F"] * 2, "yob": [1985, 1990, 1972, 2001]})
+    assert _dim(profile(df), "yob")["n_groups"] == 0
+
+
+def test_age_reference_year_is_validated_and_ignores_non_integer_values():
+    df = pd.DataFrame({"sex": ["M", "F"] * 2, "yob": [1985, 1990, 1972, 2001]})
+    for bad in (1850, 2026.5):
+        with pytest.raises(ValueError, match="age_reference_year"):
+            profile(df, None, {"age_reference_year": bad})
+    frac = pd.DataFrame({"sex": ["M", "F"], "age": [1985.5, 30]})
+    assert _age_dim(profile(frac, None, {"age_reference_year": 2026}))["implausible_values"] == 1
+
+
+# --- #856: user-extensible detection vocabulary --------------------------------------------
+
+def test_keywords_option_adds_vocabulary_after_the_built_ins():
+    from faircode.detect import classify_name
+    assert classify_name("gndr") is None
+    assert classify_name("gndr", {"sex": ["GNDR"]}) == "sex"
+    assert classify_name("sex_code", {"sex": ["gndr"]}) == "sex"           # built-ins still win/match
+    result = profile(pd.DataFrame({"gndr": ["a", "b"] * 3, "umr": [20, 30, 40, 50, 60, 70]}), None,
+                     {"keywords": {"sex": ["gndr"], "age": ["umr"]}})
+    assert {d["name"]: d["kind"] for d in result["dimensions"]} == {"gndr": "sex", "umr": "age"}
+    assert not any("No column name matched" in f for f in result["flags"])
+
+
+def test_keywords_exact_only_and_prefix_rules():
+    from faircode.detect import classify_name
+    assert classify_name("umuraa", {"age": ["umur"]}) == "age"                      # 4+ chars: prefix
+    assert classify_name("umuraa", {"age": ["umur"], "exact_only": ["umur"]}) is None
+    assert classify_name("umur", {"age": ["umur"], "exact_only": ["umur"]}) == "age"
+
+
+def test_keywords_are_validated_and_recorded_in_provenance_params():
+    from faircode.profiler import _resolve_opts
+    from faircode.provenance import public_params
+    for bad in ({"colour": ["x"]}, {"sex": "x"}, {"sex": ["two words"]}, {"sex": [""]}, ["x"]):
+        with pytest.raises(ValueError, match="keywords"):
+            profile(pd.DataFrame({"a": ["x", "y"]}), None, {"keywords": bad})
+    assert public_params(_resolve_opts({"keywords": {"sex": ["Gndr", "GNDR"]}}))["keywords"] == {"sex": ["gndr"]}
+    assert public_params(_resolve_opts(None))["keywords"] is None
+
+
+def test_italian_and_dutch_built_ins():
+    from faircode.detect import classify_name
+    for name, kind in (("sesso", "sex"), ("Geslacht", "sex"), ("razza", "race"), ("Età", "age"),
+                       ("leeftijd", "age"), ("geboortedatum", "age"), ("regione", "geography"),
+                       ("paese", "geography"), ("gemeente", "geography")):
+        assert classify_name(name) == kind, name
+    for name in ("beta", "rassegna", "stadium", "etagere"):
+        assert classify_name(name) is None, name
+
+
+def test_empty_subgroup_is_flagged_with_an_infinite_imbalance():
+    # #975: a 0-row group (built from counts: profile() cannot produce one from data since #994)
+    from js_helpers import result_with_an_empty_subgroup
+    result = result_with_an_empty_subgroup()
+    dim = result["dimensions"][0]
+    assert dim["imbalance_ratio"] is None and dim["n_groups"] == 3
+    assert next(g for g in dim["groups"] if g["label"] == "X")["count"] == 0
+    assert "sex: a subgroup is effectively absent (0 rows)" in result["flags"]
+
+
+def test_unused_categories_are_not_zero_row_groups():
+    # #994: a Categorical (for example from Parquet) must score like the same data as plain text.
+    values = ["M"] * 30 + ["F"] * 30
+    unused = pd.Series(pd.Categorical(values, categories=["M", "F", "X"]))
+    categorical = profile(pd.DataFrame({"sex": unused}))
+    plain = profile(pd.DataFrame({"sex": values}))
+    dim = categorical["dimensions"][0]
+    assert [g["label"] for g in dim["groups"]] == ["F", "M"]
+    assert dim["n_groups"] == 2 and dim["imbalance_ratio"] == 1.0
+    assert categorical["overall_score"] == plain["overall_score"]
+    assert not any("effectively absent" in f for f in categorical["flags"])

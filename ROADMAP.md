@@ -27,7 +27,7 @@ Fair Code is an open-source responsible AI platform explaining algorithmic bias,
 
 | Stars | Contributors | Forks | Watching | Social Reach | Countries | Audits | Explainers | CI |
 |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| 49 | 46 | 51 | 8 | 30K+ | 20 | 7 | 62 | ✅ every push/PR |
+| 51 | 52 | 57 | 8 | 30K+ | 20 | 7 | 62 | ✅ every push/PR |
 
 > The earlier paper freeze has lifted - the real paper, with fresh results, is now planned for next
 > year. `paper/results-frozen/` (tag `v1.0-paper`, commit `bbef2ba`) is kept as a reference snapshot.
@@ -136,7 +136,7 @@ Each audit follows the same pipeline: train a biased model → measure the fairn
 
 ## Phase 4 - Contributor Expansion 🔄 In Progress
 
-**Status: Goal exceeded - 46 external contributors, past the original 15+ target**
+**Status: Goal exceeded - 52 external contributors, past the original 15+ target**
 
 Goal: grow to 15+ contributors with quality-controlled contributions.
 
@@ -147,7 +147,7 @@ Goal: grow to 15+ contributors with quality-controlled contributions.
 - [x] CI pipeline (all audit scripts run on push/PR)
 - [x] Good-first-issue and help-wanted labels
 - [x] First-interaction workflow (greets new contributors)
-- [ ] Target: 10–15 labelled issues open at all times (currently 19 - a moving snapshot, not a maintained invariant; no automated mechanism keeps it true over time)
+- [ ] Target: 10–15 labelled issues open at all times (currently 27 - a moving snapshot, not a maintained invariant; no automated mechanism keeps it true over time)
 - [x] Contributor list in README
 - [x] METRICS.md tracking contributor growth weekly
 
@@ -170,7 +170,29 @@ Go deeper on measurement - fairness dashboards, interactive notebooks, and stati
 - [x] Fairness dashboard for the benchmark harness results (interactive `results/` explorer, mirroring the Open Dataset Profiler's web/CLI split) - [benchmark.html](benchmark.html)
 - [x] Export parity: `--csv` on `faircode profile`/`compare` plus matching web Download CSV buttons, proxy-hint detection and a significance-level control on CLI, MCP and web, and a `--sample` demo dataset
 - [x] Proxy-hint depth: multiple-comparison correction, any number of held-out (already-dropped) columns per dataset in the CLI, MCP and web, and CSV provenance, with a benchmark-dashboard roll-up tab, per-audit figures and chart download
-
+- [x] Proxy-hint trustworthiness: small-expected-cell warnings (#810), the number of pairs tested behind `p_adjusted` (#821), held-out files recorded in provenance (#811), an optional join key instead of row order (#822), and ignored-sheet notes for held-out workbooks on the web (#816)
+- [x] Input robustness and data quality: `--encoding` plus BOM sniffing (#843), terminal-safe output (#845), implausible-age flagging with `--max-age` (#840), Spanish/German/French/Portuguese column names (#847), and `compare --csv` rows for one-sided dimensions (#842)
+- [x] Benchmark dashboard polish: a significance filter on the roll-up tab (#819) and chart export that follows the page theme with Light/Dark/Transparent options (#813)
+- [x] Detection and encodings: `estado_civil` no longer typed as geography (#855), user-extensible vocabulary via `--keywords` plus Italian/Dutch built-ins (#856), a web encoding picker (#857) and the encoding recorded in provenance (#858)
+- [x] Proxy follow-ups: composite and normalised held-out keys (#859), provenance on the MCP `proxy_hints` tool (#860), an exact-test fallback for small cells (#861), colon-named held-out columns (#869)
+- [x] Age handling: birth-year conversion with `--age-reference-year` (#862) and negative-sentinel flagging (#863)
+- [x] Dashboard and compare: a per-tab significance toggle (#864), a hatch cue and colour-blind palette (#865), rename suggestions (#866) and data-quality flags (#868) in `compare`, `--csv-bom` (#867) and an ignored-`--encoding` notice (#870)
+- [x] Proxy and MCP follow-ups: the MCP `proxy_hints` tool honouring `max_age`/`age_reference_year`/`keywords` (#883), Unicode-safe key normalisation (#884), a visible `chi2-capped` note when `--proxy-exact` is capped (#885), faster permutation p-values (#886), held-out encodings in provenance (#891) and per-spec key normalisation on the CLI (#892)
+- [x] Compare and web polish: rename suggestions for recoded labels (#887) and in the compare CSV (#896), keywords textarea persistence and error text (#888, #889), the reference baseline honouring the encoding picker (#890)
+- [x] Dashboard and tooling: Export colours in the deep link (#893), a key for the hatched bars (#894), and a `slow` marker with `make test-fast` so the benchmark tests do not dominate local runs (#895)
+- [x] Reproducibility and parity: Python/JS key-normalisation parity for trimmed characters and case folding (#897, #911), proxy alpha/correction/exact and the xlsx sheet recorded in provenance (#898, #899), `42.0` against `42` keys (#903), the `~` and `!` markers in the CLI and web (#907, #912), per-file held-out encodings (#914), and a Copy as CLI command button (#915)
+- [x] Compare, web and exact-test: rename suggestions from column names (#902) and `--rename` to act on them (#913), the reference baseline re-applied when the picker changes (#900), synced keyword boxes (#901), the Summary-tab chart key (#905), exact-test shuffles and row cap as parameters (#906) with a re-measured cap (#909), near-unique held-out columns skipped with a note (#908), and a pre-push hook and `slow` marker that keep the fast suite near 30 s (#904, #910)
+- [x] Held-out, key and exact-test hardening: shuffles capped and configurable in the web (#925, #926), skipped near-unique columns in JSON and provenance (#921), encoding notices and `@ENCODING` in the web (#923, #924), NFKC key folding and a case-folding generator (#935, #939), group-count tolerance and `--rename` pairs in the compare CSV (#918, #920), plus contributor fixes for rename tokens, identity renames and numeric ages (#917, #919, #937)
+- [x] Copy as CLI command and docs: `--sample`, export options and quoting tests (#928, #929, #934), the restored-keywords note (#930), README held-out syntax and the MCP parameter tables (#922, #931), the asset-source record for `brag-output/` (#936), one coverage run in CI (#932), a faster OG-image test (#933), the PRNG oracle in the tests (#927) and a split parity test file (#938)
+- [x] Portability, reproducibility and checks: no regex lookbehind in browser scripts (#956), web exports with `tested: false` and notes (#951), a verified case-folding table (#946), `\=` in held-out paths (#958), a named near-unique constant (#957), the compare HTML rename sections (#953), one MCP `notes` key (#950), an explicit held-out report (#947), parsed README commands (#948), a roadmap issue-number checker (#963), the SPEC proxy section (#955) and the brag-output licences (#954)
+- [x] Web and test hardening: inline errors for the exact inputs (#962), a content-named keywords file (#944), the workbook encoding notice (#952), `pythonpath` for shared helpers (#945), and tests for `python -m faircode`, compare flags, MCP reader errors, delimiter sniffing, proxy-hint rendering and rename tolerance (#966, #959, #965, #964, #960, #949)
+- [x] Engine parity and correctness: only ASCII digits in the numeric check (#967), a repeated held-out column after a skip (#980), array and object columns skipped by the web engine (#973), a loud failure for an unhandled subcommand (#971), and tests for the validation, empty-subgroup, manifest, stdin, `--rename`, `--keywords`, `--csv -` and provenance branches (#968-#970, #972, #974-#979)
+- [x] Web and tooling: shared helpers for the two views (#983), a browser-level smoke test with its own workflow (#988), an MCP stdio test and the alias removal plan (#987, #984), a missing-node fallback for the key-fold check (#982), the issue-number checker for contributors and metrics (#981) and a smaller profile parity test file (#985)
+- [x] Engine and loader fixes: nested JSON objects in the web engine (#992), mixed number and string labels (#993), unused pandas categories (#994), empty files (#1010), unreadable reference shares (#1002) and the row-filter rules in MANIFEST_SPEC (#999)
+- [x] Tooling, web and test follow-ups: a clear message when the mcp extra is missing (#995), one source for the web version (#996), `make test-browser` (#997), more browser interactions (#1000), the shared view helpers (#1008) and tests for compare HTML, metrics, loaders, sniffing, workbooks and the figures command (#1001, #1003-#1007)
+- [ ] Label and number parity between the engines: float-looking codes (#1011), JSON booleans, `1.0`, large integers and exponents (#1012-#1015), and the order of labels outside the BMP (#1016)
+- [ ] Input handling: a clear error for `.xls`, binary files and JSON Lines (#1018, #1019, #1027), ragged rows, unterminated quotes, NUL bytes and JSON `NaN` (#1023-#1026)
+- [ ] Reports and gates: `compare --fail-on-drift` with nothing to compare (#1017), long group labels in the terminal (#1021), an empty proxy-hint result (#1022), blank reference shares (#1028), the em-dash check's file types (#1020), subprocess coverage (#986), the contributor notes for the new checks (#989), labels that differ only in case (#1009) and the remaining view duplication in `render` and `readFile`
 ---
 
 ## Phase 6 - Research Paper and Publication - Paused, Retargeted for Next Year

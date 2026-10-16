@@ -20,6 +20,8 @@
   var MAX_CATEGORICAL_CARD = 20;
   var MAX_DIMENSION_GROUPS = 50;
   var MIN_GROUP_SIZE = 100;  // warn when a subgroup has fewer than N rows (SPEC 3)
+  var BIRTH_YEAR_MIN = 1900;  // with age_reference_year, whole numbers from here up to it are birth years
+  var MAX_AGE = 120;         // numeric ages above this are implausible, not banded (SPEC 2)
   var REFERENCE_DEVIATION_FLAG = 0.05;
   // Kinds a manual override may force a column to; mirror faircode/detect.py.
   var VALID_KINDS = { sex: 1, race: 1, age: 1, geography: 1, categorical: 1 };
@@ -34,6 +36,9 @@
     min_group_size: MIN_GROUP_SIZE,  // warn when a subgroup has fewer than N rows
     max_categorical_card: MAX_CATEGORICAL_CARD,
     max_dimension_groups: MAX_DIMENSION_GROUPS,
+    max_age: MAX_AGE,  // ages above this are not banded; flagged instead (SPEC 2)
+    age_reference_year: null,  // convert birth years in age columns to ages as of this year
+    keywords: null,   // extra column-name vocabulary {kind: [words]} for detection (SPEC 1)
     cross: null,      // [colA, colB] to force the intersection pair (SPEC 4)
     reference: null   // {column: {group: expected_share}} baseline (SPEC 8)
   };
@@ -64,6 +69,13 @@
     if (o.max_dimension_groups !== null && o.max_dimension_groups !== undefined && o.max_dimension_groups < 1) {
       throw new Error('max_dimension_groups must be >= 1, got ' + o.max_dimension_groups);
     }
+    if (o.max_age !== null && o.max_age !== undefined && !(o.max_age > 0)) {
+      throw new Error('max_age must be > 0, got ' + o.max_age);
+    }
+    var refYear = o.age_reference_year;
+    if (refYear !== null && refYear !== undefined && (refYear !== Math.floor(refYear) || refYear < BIRTH_YEAR_MIN)) {
+      throw new Error('age_reference_year must be a whole year >= ' + BIRTH_YEAR_MIN + ', got ' + refYear);
+    }
   }
 
   function resolveOpts(opts) {
@@ -75,6 +87,7 @@
       });
     }
     validateOpts(o);
+    o.keywords = normalizeKeywords(o.keywords);
     return o;
   }
 
@@ -88,14 +101,70 @@
   // faircode.provenance.public_params(faircode.profiler._resolve_opts(opts)),
   // so a web-profiler export's provenance.params matches the CLI/MCP path
   // even when the user never touched a threshold input (#490).
-  function publicParams(opts) {
+  function publicParams(opts, proxy) {
     var resolved = resolveOpts(opts);
+    // `proxy` ({alpha, correction, exact}) is added when proxy hints were run, like
+    // provenance.proxy_params() (#898).
+    if (proxy) {
+      resolved = Object.assign({}, resolved, { alpha: proxy.alpha, correction: proxy.correction || null, exact: !!proxy.exact });
+      if (proxy.exact) {   // the settings that decide the exact p-values (#906)
+        resolved.exact_permutations = proxy.permutations || PERMUTATIONS;
+        resolved.exact_max_rows = proxy.maxRows || PERMUTATION_MAX_ROWS;
+      }
+    }
     var out = {};
     Object.keys(resolved).sort().forEach(function (k) {
       if (!OPAQUE_PARAMS[k]) out[k] = resolved[k];
     });
     return out;
   }
+  // ── Text decoding for uploaded files (#857) ─────────────────────────────
+  // The browser counterpart of faircode/loaders.py's --encoding / BOM sniffing.
+  // `choice` is 'auto' (BOM sniff, else UTF-8) or one of the Python codec names the
+  // picker offers: 'utf-8', 'utf-16', 'cp1252', 'latin-1'. Returns the text and the
+  // encoding to record in provenance: the explicit choice, or the sniffed BOM
+  // ('utf-8-sig' / 'utf-16' / 'utf-32'), or null for plain UTF-8 (the default shape).
+  function sniffBomEncoding(b) {
+    if (b.length >= 4 && b[0] === 0xFF && b[1] === 0xFE && b[2] === 0 && b[3] === 0) return 'utf-32';
+    if (b.length >= 4 && b[0] === 0 && b[1] === 0 && b[2] === 0xFE && b[3] === 0xFF) return 'utf-32';
+    if (b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) return 'utf-8-sig';
+    if (b.length >= 2 && ((b[0] === 0xFF && b[1] === 0xFE) || (b[0] === 0xFE && b[1] === 0xFF))) return 'utf-16';
+    return null;
+  }
+
+  function decodeText(buffer, choice) {
+    var bytes = new Uint8Array(buffer), explicit = choice && choice !== 'auto' ? choice : null;
+    var enc = explicit || sniffBomEncoding(bytes) || 'utf-8';
+    var text, i;
+    if (enc === 'utf-8' || enc === 'utf-8-sig') {
+      text = new TextDecoder('utf-8').decode(bytes);                 // drops a leading BOM
+    } else if (enc === 'utf-16') {
+      var be = bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF;
+      text = new TextDecoder(be ? 'utf-16be' : 'utf-16le').decode(bytes);
+    } else if (enc === 'utf-32') {
+      var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength - (bytes.byteLength % 4));
+      var littleEndian = !(bytes.length >= 4 && bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0xFE && bytes[3] === 0xFF);
+      var parts = [];
+      for (i = 0; i + 4 <= view.byteLength; i += 4) {
+        var cp = view.getUint32(i, littleEndian);
+        if (i === 0 && cp === 0xFEFF) continue;
+        parts.push(String.fromCodePoint(cp > 0x10FFFF ? 0xFFFD : cp));
+      }
+      text = parts.join('');
+    } else if (enc === 'cp1252') {
+      text = new TextDecoder('windows-1252').decode(bytes);
+    } else if (enc === 'latin-1') {
+      var chunks = [];
+      for (i = 0; i < bytes.length; i += 8192) {
+        chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)));
+      }
+      text = chunks.join('');
+    } else {
+      throw new Error('unsupported encoding ' + enc);
+    }
+    return { text: text, encoding: explicit || (enc === 'utf-8' ? null : enc) };
+  }
+
   // Comparison / drift (SPEC section 8)
   var PSI_EPSILON = 0.0001;
   var MISSING_DRIFT_FLAG = 0.05;
@@ -121,14 +190,28 @@
 
   // ── Keyword lists - MUST mirror faircode/detect.py ─────────────────────
   var KEYWORDS = [
-    ['sex', ['sex', 'gender']],
-    ['race', ['race', 'ethnic', 'ethnicity']],
-    ['age', ['age', 'dob', 'yob', 'birth']],
+    ['sex', ['sex', 'gender',
+             'sexo', 'genero', 'geschlecht', 'sexe', 'sesso', 'geslacht']],
+    ['race', ['race', 'ethnic', 'ethnicity',
+              'raza', 'etnia', 'rasse', 'ethnie', 'raca', 'razza', 'etnie', 'ras']],
+    ['age', ['age', 'dob', 'yob', 'birth',
+             'edad', 'nacimiento', 'alter', 'geburt', 'idade', 'nascimento', 'naissance',
+             'eta', 'nascita', 'leeftijd', 'geboorte']],
     ['geography', ['region', 'state', 'zip', 'zipcode', 'postal', 'country',
-                   'county', 'city', 'location', 'province']]
+                   'county', 'city', 'location', 'province',
+                   'estado', 'pais', 'provincia', 'ciudad', 'bundesland', 'land', 'stadt',
+                   'plz', 'ville', 'pays', 'departement', 'cidade', 'regiao', 'municipio',
+                   'regione', 'paese', 'citta', 'comune', 'stad', 'gemeente', 'provincie']]
   ];
 
-  var DATE_RE = /\d{1,4}[/-]\d{1,2}[/-]\d{1,4}/;
+  var DATE_RE = /[0-9]{1,4}[/-][0-9]{1,2}[/-][0-9]{1,4}/;
+
+  // Appended to `flags` when nothing was recognised by name (#847); must mirror
+  // faircode/profiler.py's NO_KIND_DETECTED_FLAG.
+  var NO_KIND_DETECTED_FLAG =
+    'No column name matched sex, race, age or geography, so every dimension is a plain ' +
+    'categorical (ages are not banded, geography is not recognised). If a column is one of ' +
+    'these, map it by hand: --map COL=KIND, or the column-mapping control on the web.';
 
   // ── Delimiter sniffing (SPEC-adjacent; mirrors faircode/loaders.py) ─────
   // Picks whichever of , \t ; | appears the same number of times on every
@@ -184,10 +267,32 @@
 
   // ── CSV/TSV parsing ──────────────────────────────────────────────────────
   // Handles quoted fields, escaped quotes (""), and newlines inside quotes.
+  // pandas renames a repeated header to name.1, name.2, ... (skipping any name
+  // already taken); without this the second copy overwrote the first in every
+  // row object and both dimensions read the LAST column's values (#834).
+  function dedupeHeaders(columns) {
+    var used = Object.create(null), seen = Object.create(null);
+    columns.forEach(function (c) { used[c] = (used[c] || 0) + 1; });
+    var taken = Object.create(null);
+    return columns.map(function (c) {
+      if (!taken[c]) { taken[c] = true; return c; }
+      var n = (seen[c] || 0) + 1, candidate = c + '.' + n;
+      while (used[candidate] || taken[candidate]) { n++; candidate = c + '.' + n; }
+      seen[c] = n;
+      taken[candidate] = true;
+      return candidate;
+    });
+  }
+
   function parseCSV(text, delimiter) {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
+    // Same wording as loaders_extra.EMPTY_DATASET_MESSAGE: a file with no header row is an error (#1010).
+    if (text.trim() === '') throw new Error('dataset is empty (no header row)');
     delimiter = delimiter || sniffDelimiter(text);
     var rows = [], field = '', row = [], inQuotes = false;
+    // A row made of one quoted empty field ("") is a real missing value to
+    // pandas, not a blank line to skip (#835).
+    var rowQuoted = false;
     for (var i = 0; i < text.length; i++) {
       var c = text[i];
       if (inQuotes) {
@@ -197,19 +302,21 @@
         } else field += c;
       } else if (c === '"' && field === '') {
         inQuotes = true;
+        rowQuoted = true;
       } else if (c === delimiter) {
         row.push(field); field = '';
       } else if (c === '\n' || c === '\r') {
         if (c === '\r' && text[i + 1] === '\n') i++;
         row.push(field); field = '';
-        if (row.length > 1 || row[0] !== '') rows.push(row);
+        if (row.length > 1 || row[0] !== '' || rowQuoted) rows.push(row);
         row = [];
+        rowQuoted = false;
       } else field += c;
     }
-    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    if (field !== '' || row.length || rowQuoted) { row.push(field); rows.push(row); }
     if (!rows.length) return { columns: [], rows: [] };
 
-    var columns = rows[0];
+    var columns = dedupeHeaders(rows[0]);
     var data = [];
     for (var r = 1; r < rows.length; r++) {
       var obj = {};
@@ -228,8 +335,22 @@
   // pandas' read_json/read_excel do the same, so a later record with an
   // extra key (or an earlier one missing a key another has) isn't silently
   // dropped.
+  // Nested plain objects become dotted columns (loc.state), like pandas.json_normalize in
+  // loaders_extra.read_table (#844, #992); arrays and null stay as cells.
+  function flattenRecord(record, prefix, out) {
+    Object.keys(record).forEach(function (key) {
+      var value = record[key], name = prefix + key;
+      if (value && typeof value === 'object' && !Array.isArray(value)) flattenRecord(value, name + '.', out);
+      else out[name] = value;
+    });
+    return out;
+  }
+
   function recordsToTable(records) {
     if (!records.length) return { columns: [], rows: [] };
+    records = records.map(function (r) {
+      return r && typeof r === 'object' && !Array.isArray(r) ? flattenRecord(r, '', {}) : r;
+    });
     var columns = [];
     var seen = {};
     for (var pi = 0; pi < records.length; pi++) {
@@ -429,7 +550,9 @@
 
   // ── Column detection (SPEC section 1) ──────────────────────────────────
   function tokens(name) {
-    var spaced = String(name).replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+    // Accent-stripped like detect.py's _tokens (NFD, then drop U+0300-U+036F).
+    var stripped = String(name).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    var spaced = stripped.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
     return spaced.split(/[^A-Za-z0-9]+/).filter(Boolean).map(function (t) {
       return t.toLowerCase();
     });
@@ -437,20 +560,88 @@
 
   // Keywords whose prefix form collides with ordinary English words - see
   // faircode/detect.py's EXACT_ONLY_KEYWORDS, must mirror it exactly.
-  var EXACT_ONLY_KEYWORDS = { race: 1, state: 1, city: 1, region: 1, country: 1 };
+  var EXACT_ONLY_KEYWORDS = {
+    race: 1, state: 1, city: 1, region: 1, country: 1,
+    genero: 1, alter: 1, land: 1, raza: 1, raca: 1, rasse: 1, pais: 1, pays: 1, estado: 1,
+    ville: 1, stadt: 1, razza: 1, paese: 1, citta: 1, stad: 1, ras: 1, eta: 1
+  };
 
-  function tokenMatches(token, keyword) {
-    if (keyword.length < 4 || EXACT_ONLY_KEYWORDS.hasOwnProperty(keyword)) return token === keyword;
+  // Validate and normalise the user's extra detection vocabulary; mirrors
+  // faircode/detect.py normalize_keywords (#856). Returns null when empty.
+  var KEYWORD_KINDS = ['sex', 'race', 'age', 'geography'];
+  function normalizeKeywords(raw) {
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('keywords must be an object mapping a kind to a list of words');
+    }
+    var allowed = KEYWORD_KINDS.concat(['exact_only']);
+    var given = Object.keys(raw);
+    if (!given.length) return null;
+    var unknown = given.filter(function (k) { return allowed.indexOf(k) === -1; });
+    if (unknown.length) {
+      throw new Error('keywords has unknown key(s): ' + unknown.join(', ') + '; allowed: ' + allowed.join(', '));
+    }
+    var out = {};
+    allowed.forEach(function (key) {
+      if (!Object.prototype.hasOwnProperty.call(raw, key)) return;
+      var words = raw[key];
+      if (!Array.isArray(words)) throw new Error('keywords.' + key + ' must be a list of words');
+      var normalised = [];
+      words.forEach(function (word) {
+        if (typeof word !== 'string' || !word.trim()) {
+          throw new Error('keywords.' + key + ' entries must be non-empty strings');
+        }
+        var text = word.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+        if (!/^[a-z0-9]+$/.test(text)) {
+          throw new Error('keywords.' + key + ' entry ' + JSON.stringify(word) + ' must be a single word of letters and digits');
+        }
+        if (normalised.indexOf(text) === -1) normalised.push(text);
+      });
+      out[key] = normalised;
+    });
+    return Object.keys(out).length ? out : null;
+  }
+
+  function tokenMatches(token, keyword, extraExact) {
+    if (keyword.length < 4 || EXACT_ONLY_KEYWORDS.hasOwnProperty(keyword) ||
+        (extraExact && extraExact.indexOf(keyword) !== -1)) return token === keyword;
     return token.indexOf(keyword) === 0; // prefix match
   }
 
-  function classifyName(name) {
+  // Compound marital-status phrases that contain a geography stem (estado)
+  // but are not geography - must mirror faircode/detect.py NON_GEOGRAPHY_PHRASES (#855).
+  var NON_GEOGRAPHY_PHRASES = [
+    ['estado', 'civil'],
+    ['marital', 'status'],
+    ['stato', 'civile'],
+    ['etat', 'civil']
+  ];
+
+  function hasConsecutivePhrase(toks, phrase) {
+    var n = phrase.length;
+    if (n === 0 || toks.length < n) return false;
+    for (var i = 0; i <= toks.length - n; i++) {
+      var match = true;
+      for (var j = 0; j < n; j++) {
+        if (toks[i + j] !== phrase[j]) { match = false; break; }
+      }
+      if (match) return true;
+    }
+    return false;
+  }
+
+  function classifyName(name, keywords) {
+    keywords = normalizeKeywords(keywords);
+    var extra = keywords || {}, extraExact = extra.exact_only || [];
     var toks = tokens(name);
+    for (var p = 0; p < NON_GEOGRAPHY_PHRASES.length; p++) {
+      if (hasConsecutivePhrase(toks, NON_GEOGRAPHY_PHRASES[p])) return null;
+    }
     for (var k = 0; k < KEYWORDS.length; k++) {
-      var kind = KEYWORDS[k][0], words = KEYWORDS[k][1];
+      var kind = KEYWORDS[k][0], words = KEYWORDS[k][1].concat(extra[KEYWORDS[k][0]] || []);
       for (var t = 0; t < toks.length; t++) {
         for (var w = 0; w < words.length; w++) {
-          if (tokenMatches(toks[t], words[w])) return kind;
+          if (tokenMatches(toks[t], words[w], extraExact)) return kind;
         }
       }
     }
@@ -466,7 +657,8 @@
     return Object.keys(seen).length;
   }
 
-  function detectColumns(table, overrides, maxCategoricalCard) {
+  function detectColumns(table, overrides, maxCategoricalCard, keywords) {
+    keywords = normalizeKeywords(keywords);
     overrides = overrides || {};
     if (maxCategoricalCard === null || maxCategoricalCard === undefined) {
       maxCategoricalCard = MAX_CATEGORICAL_CARD;
@@ -478,8 +670,11 @@
         if (VALID_KINDS[forced]) detected.push({ name: col, kind: forced });
         return; // any other value (e.g. 'ignore') excludes the column
       }
-      var kind = classifyName(col);
+      var kind = classifyName(col, keywords);
       if (kind !== null) { detected.push({ name: col, kind: kind }); return; }
+      // A column holding objects or arrays cannot form groups; mirrors detect.py skipping the
+      // TypeError from nunique() on unhashable cells (#844, #973).
+      if (table.rows.some(function (r) { return r[col] !== null && typeof r[col] === 'object'; })) return;
       var n = nunique(table.rows, col);
       if (n >= 2 && n <= maxCategoricalCard) {
         detected.push({ name: col, kind: 'categorical' });
@@ -489,16 +684,49 @@
   }
 
   // ── Age handling (SPEC section 2) ──────────────────────────────────────
-  function ageToNumeric(value) {
+  // Match the numeric grammar used by pandas when it infers an otherwise
+  // numeric age column, including scientific notation. Non-finite numeric
+  // tokens (inf/nan) are treated as missing rather than categorical values.
+  var AGE_NUMERIC_RE = /[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?/;
+  var AGE_NONFINITE_RE = /^[+-]?(?:inf(?:inity)?|nan)$/i;
+
+  function rawAgeToNumeric(value) {
     if (value === null || value === undefined) return null;
     var numeric;
     if (typeof value === 'number') numeric = value;
     else {
-      var m = String(value).match(/[+-]?\d+(?:\.\d+)?/);
+      var text = String(value);
+      var m = text.match(AGE_NUMERIC_RE);
       if (!m) return null;
       numeric = parseFloat(m[0]);
     }
-    return Number.isFinite(numeric) && numeric >= AGE_BANDS[0] ? numeric : null;
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function ageToNumeric(value) {
+    var numeric = rawAgeToNumeric(value);
+    return numeric !== null && numeric >= AGE_BANDS[0] ? numeric : null;
+  }
+
+  // Mirrors faircode.profiler._age_numbers (#840, #863): per-cell numeric ages with those
+  // above maxAge or negative removed (null), plus how many there were and if any were negative.
+  function ageNumbers(rows, name, maxAge, referenceYear) {
+    var nums = [], implausible = 0, hasNegative = false;
+    for (var i = 0; i < rows.length; i++) {
+      var n = rawAgeToNumeric(rows[i][name]);
+      // A whole number from 1900 up to referenceYear is a birth year (#862).
+      if (referenceYear !== null && referenceYear !== undefined && n !== null &&
+          n >= BIRTH_YEAR_MIN && n <= referenceYear && n === Math.floor(n)) {
+        n = referenceYear - n;
+      }
+      if (n !== null && (n < AGE_BANDS[0] || n > maxAge)) {
+        implausible++;
+        if (n < AGE_BANDS[0]) hasNegative = true;
+        n = null;
+      }
+      nums.push(n);
+    }
+    return { nums: nums, implausible: implausible, hasNegative: hasNegative };
   }
 
   function ageBand(num) {
@@ -520,7 +748,9 @@
   // this profiler's prior behavior for range-invalid numeric sentinels.
   function isCategoricalAgeSentinel(value) {
     if (value === null || value === undefined || typeof value === 'number') return false;
-    return !/[+-]?\d+(?:\.\d+)?/.test(String(value));
+    var text = String(value).trim();
+    if (AGE_NONFINITE_RE.test(text)) return false;
+    return !AGE_NUMERIC_RE.test(text);
   }
 
   var AGE_BAND_LABELS = Object.create(null);
@@ -649,18 +879,18 @@
     };
   }
 
-  function dimension(table, name, kind, minShareThreshold, minGroupSize) {
+  function dimension(table, name, kind, minShareThreshold, minGroupSize, maxAge, referenceYear) {
     var rows = table.rows, nTotal = rows.length, i, v;
+    if (maxAge === undefined) maxAge = MAX_AGE;
 
     if (kind === 'age' && !looksLikeDates(rows, name)) {
-      var nums = [], numericVals = [];
+      var parsedAges = ageNumbers(rows, name, maxAge, referenceYear);
+      var nums = parsedAges.nums, numericVals = [];
       for (i = 0; i < nTotal; i++) {
-        var num = ageToNumeric(rows[i][name]);
-        nums.push(num);
-        if (num !== null) numericVals.push(num);
+        if (nums[i] !== null) numericVals.push(nums[i]);
       }
-      if (numericVals.length) {
-        var skew = skewness(numericVals);
+      if (numericVals.length || parsedAges.implausible) {
+        var skew = numericVals.length ? skewness(numericVals) : null;
         var counts = Object.create(null), nullCount = 0;
         for (i = 0; i < nums.length; i++) {
           var b = ageBand(nums[i]);
@@ -681,6 +911,10 @@
         }
         var res = analyzeGroups(counts, nTotal, nullCount, skew, minShareThreshold, minGroupSize);
         res.name = name; res.kind = kind;
+        if (parsedAges.implausible) {
+          res.implausible_values = parsedAges.implausible;
+          if (parsedAges.hasNegative) res.has_negative_ages = true;
+        }
         return res;
       }
     }
@@ -700,17 +934,19 @@
   }
 
   // ── Intersectional gaps (SPEC section 4) ───────────────────────────────
-  function labelize(table, name, kind) {
+  function labelize(table, name, kind, maxAge, referenceYear) {
     var rows = table.rows, out = [], i;
+    if (maxAge === undefined) maxAge = MAX_AGE;
     if (kind === 'age' && !looksLikeDates(rows, name)) {
-      var any = false;
-      for (i = 0; i < rows.length; i++) {
-        if (ageToNumeric(rows[i][name]) !== null) { any = true; break; }
+      var parsedAges = ageNumbers(rows, name, maxAge, referenceYear);
+      var any = parsedAges.implausible > 0;
+      for (i = 0; i < rows.length && !any; i++) {
+        if (parsedAges.nums[i] !== null) any = true;
       }
       if (any) {
         for (i = 0; i < rows.length; i++) {
           var value = rows[i][name];
-          var num = ageToNumeric(value);
+          var num = parsedAges.nums[i];
           // Non-numeric age sentinels get their own categorical label here
           // too, matching dimension()'s main breakdown - otherwise they map
           // to null and intersections() drops those rows, so the crosstab
@@ -734,14 +970,14 @@
     return [dims[0], dims[1]];
   }
 
-  function intersections(table, dims, intersectionFloor, cross) {
+  function intersections(table, dims, intersectionFloor, cross, maxAge, referenceYear) {
     if (dims.length < 2) return [];
     if (intersectionFloor === undefined) intersectionFloor = INTERSECTION_FLOOR;
     var pair = pickCross(dims, cross), a = pair[0], b = pair[1];
     var nTotal = table.rows.length;
     var floor = intersectionFloor * nTotal;
-    var la = labelize(table, a.name, a.kind);
-    var lb = labelize(table, b.name, b.kind);
+    var la = labelize(table, a.name, a.kind, maxAge, referenceYear);
+    var lb = labelize(table, b.name, b.kind, maxAge, referenceYear);
 
     var ct = Object.create(null), aVals = Object.create(null), bVals = Object.create(null), i, key;
     for (i = 0; i < nTotal; i++) {
@@ -832,8 +1068,111 @@
   // Held-out columns (#781): {name: valuesArray} for a protected attribute
   // already dropped from `table` - the browser counterpart of the CLI's
   // --proxy-hints-with PATH=COLUMN, treated as plain categorical values.
-  // parseHeldOut() applies the same checks as proxy.py's parse_held_out_specs.
-  function parseHeldOut(heldTable, column, table, already) {
+  // parseHeldOut() applies the same checks as proxy.py's parse_held_out_specs,
+  // including the optional join `key` (#822): rows are matched on that column
+  // instead of by position.
+  // The column names a join key refers to: the key itself when it is a column, else the
+  // `+`-separated parts of a composite key when all are columns, else null. Mirrors
+  // faircode/proxy.py key_columns (#859).
+  function keyColumns(key, columns) {
+    if (columns.indexOf(key) !== -1) return [key];
+    var parts = key.split('+');
+    if (parts.length > 1 && parts.every(function (p) { return p && columns.indexOf(p) !== -1; })) return parts;
+    return null;
+  }
+
+  // Opt-in key normalisation: trim, NFKC (compatibility composition, #935), case-fold, drop leading zeros of an
+  // all-digit value. Mirrors proxy.py normalize_key_text (#859, #884, #911).
+  // Same trimmed set as proxy.py KEY_TRIM_CHARS (#897): not String.prototype.trim(), which differs.
+  var KEY_TRIM = /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
+  // KEY_FOLD:begin
+  // Where Python's casefold() (full case folding) differs from toLowerCase(), per character: the
+  // 297 characters that fold to something else (ligatures, final sigma, long s, sharp s...).
+  // GENERATED by scripts/generate_key_fold.py (make key-fold); do not edit by hand (#911, #939).
+  // Built with: Python 3.13.2 (Unicode 15.1.0) and node v26.4.0 (Unicode 17.0)
+  var KEY_FOLD = {
+    '\u00b5':'\u03bc', '\u00df':'\u0073\u0073', '\u0149':'\u02bc\u006e', '\u017f':'\u0073',
+    '\u01f0':'\u006a\u030c', '\u0345':'\u03b9', '\u0390':'\u03b9\u0308\u0301', '\u03b0':'\u03c5\u0308\u0301',
+    '\u03c2':'\u03c3', '\u03d0':'\u03b2', '\u03d1':'\u03b8', '\u03d5':'\u03c6', '\u03d6':'\u03c0',
+    '\u03f0':'\u03ba', '\u03f1':'\u03c1', '\u03f5':'\u03b5', '\u0587':'\u0565\u0582', '\u13a0':'\u13a0',
+    '\u13a1':'\u13a1', '\u13a2':'\u13a2', '\u13a3':'\u13a3', '\u13a4':'\u13a4', '\u13a5':'\u13a5',
+    '\u13a6':'\u13a6', '\u13a7':'\u13a7', '\u13a8':'\u13a8', '\u13a9':'\u13a9', '\u13aa':'\u13aa',
+    '\u13ab':'\u13ab', '\u13ac':'\u13ac', '\u13ad':'\u13ad', '\u13ae':'\u13ae', '\u13af':'\u13af',
+    '\u13b0':'\u13b0', '\u13b1':'\u13b1', '\u13b2':'\u13b2', '\u13b3':'\u13b3', '\u13b4':'\u13b4',
+    '\u13b5':'\u13b5', '\u13b6':'\u13b6', '\u13b7':'\u13b7', '\u13b8':'\u13b8', '\u13b9':'\u13b9',
+    '\u13ba':'\u13ba', '\u13bb':'\u13bb', '\u13bc':'\u13bc', '\u13bd':'\u13bd', '\u13be':'\u13be',
+    '\u13bf':'\u13bf', '\u13c0':'\u13c0', '\u13c1':'\u13c1', '\u13c2':'\u13c2', '\u13c3':'\u13c3',
+    '\u13c4':'\u13c4', '\u13c5':'\u13c5', '\u13c6':'\u13c6', '\u13c7':'\u13c7', '\u13c8':'\u13c8',
+    '\u13c9':'\u13c9', '\u13ca':'\u13ca', '\u13cb':'\u13cb', '\u13cc':'\u13cc', '\u13cd':'\u13cd',
+    '\u13ce':'\u13ce', '\u13cf':'\u13cf', '\u13d0':'\u13d0', '\u13d1':'\u13d1', '\u13d2':'\u13d2',
+    '\u13d3':'\u13d3', '\u13d4':'\u13d4', '\u13d5':'\u13d5', '\u13d6':'\u13d6', '\u13d7':'\u13d7',
+    '\u13d8':'\u13d8', '\u13d9':'\u13d9', '\u13da':'\u13da', '\u13db':'\u13db', '\u13dc':'\u13dc',
+    '\u13dd':'\u13dd', '\u13de':'\u13de', '\u13df':'\u13df', '\u13e0':'\u13e0', '\u13e1':'\u13e1',
+    '\u13e2':'\u13e2', '\u13e3':'\u13e3', '\u13e4':'\u13e4', '\u13e5':'\u13e5', '\u13e6':'\u13e6',
+    '\u13e7':'\u13e7', '\u13e8':'\u13e8', '\u13e9':'\u13e9', '\u13ea':'\u13ea', '\u13eb':'\u13eb',
+    '\u13ec':'\u13ec', '\u13ed':'\u13ed', '\u13ee':'\u13ee', '\u13ef':'\u13ef', '\u13f0':'\u13f0',
+    '\u13f1':'\u13f1', '\u13f2':'\u13f2', '\u13f3':'\u13f3', '\u13f4':'\u13f4', '\u13f5':'\u13f5',
+    '\u13f8':'\u13f0', '\u13f9':'\u13f1', '\u13fa':'\u13f2', '\u13fb':'\u13f3', '\u13fc':'\u13f4',
+    '\u13fd':'\u13f5', '\u1c80':'\u0432', '\u1c81':'\u0434', '\u1c82':'\u043e', '\u1c83':'\u0441',
+    '\u1c84':'\u0442', '\u1c85':'\u0442', '\u1c86':'\u044a', '\u1c87':'\u0463', '\u1c88':'\ua64b',
+    '\u1e96':'\u0068\u0331', '\u1e97':'\u0074\u0308', '\u1e98':'\u0077\u030a', '\u1e99':'\u0079\u030a',
+    '\u1e9a':'\u0061\u02be', '\u1e9b':'\u1e61', '\u1e9e':'\u0073\u0073', '\u1f50':'\u03c5\u0313',
+    '\u1f52':'\u03c5\u0313\u0300', '\u1f54':'\u03c5\u0313\u0301', '\u1f56':'\u03c5\u0313\u0342',
+    '\u1f80':'\u1f00\u03b9', '\u1f81':'\u1f01\u03b9', '\u1f82':'\u1f02\u03b9', '\u1f83':'\u1f03\u03b9',
+    '\u1f84':'\u1f04\u03b9', '\u1f85':'\u1f05\u03b9', '\u1f86':'\u1f06\u03b9', '\u1f87':'\u1f07\u03b9',
+    '\u1f88':'\u1f00\u03b9', '\u1f89':'\u1f01\u03b9', '\u1f8a':'\u1f02\u03b9', '\u1f8b':'\u1f03\u03b9',
+    '\u1f8c':'\u1f04\u03b9', '\u1f8d':'\u1f05\u03b9', '\u1f8e':'\u1f06\u03b9', '\u1f8f':'\u1f07\u03b9',
+    '\u1f90':'\u1f20\u03b9', '\u1f91':'\u1f21\u03b9', '\u1f92':'\u1f22\u03b9', '\u1f93':'\u1f23\u03b9',
+    '\u1f94':'\u1f24\u03b9', '\u1f95':'\u1f25\u03b9', '\u1f96':'\u1f26\u03b9', '\u1f97':'\u1f27\u03b9',
+    '\u1f98':'\u1f20\u03b9', '\u1f99':'\u1f21\u03b9', '\u1f9a':'\u1f22\u03b9', '\u1f9b':'\u1f23\u03b9',
+    '\u1f9c':'\u1f24\u03b9', '\u1f9d':'\u1f25\u03b9', '\u1f9e':'\u1f26\u03b9', '\u1f9f':'\u1f27\u03b9',
+    '\u1fa0':'\u1f60\u03b9', '\u1fa1':'\u1f61\u03b9', '\u1fa2':'\u1f62\u03b9', '\u1fa3':'\u1f63\u03b9',
+    '\u1fa4':'\u1f64\u03b9', '\u1fa5':'\u1f65\u03b9', '\u1fa6':'\u1f66\u03b9', '\u1fa7':'\u1f67\u03b9',
+    '\u1fa8':'\u1f60\u03b9', '\u1fa9':'\u1f61\u03b9', '\u1faa':'\u1f62\u03b9', '\u1fab':'\u1f63\u03b9',
+    '\u1fac':'\u1f64\u03b9', '\u1fad':'\u1f65\u03b9', '\u1fae':'\u1f66\u03b9', '\u1faf':'\u1f67\u03b9',
+    '\u1fb2':'\u1f70\u03b9', '\u1fb3':'\u03b1\u03b9', '\u1fb4':'\u03ac\u03b9', '\u1fb6':'\u03b1\u0342',
+    '\u1fb7':'\u03b1\u0342\u03b9', '\u1fbc':'\u03b1\u03b9', '\u1fbe':'\u03b9', '\u1fc2':'\u1f74\u03b9',
+    '\u1fc3':'\u03b7\u03b9', '\u1fc4':'\u03ae\u03b9', '\u1fc6':'\u03b7\u0342', '\u1fc7':'\u03b7\u0342\u03b9',
+    '\u1fcc':'\u03b7\u03b9', '\u1fd2':'\u03b9\u0308\u0300', '\u1fd3':'\u03b9\u0308\u0301',
+    '\u1fd6':'\u03b9\u0342', '\u1fd7':'\u03b9\u0308\u0342', '\u1fe2':'\u03c5\u0308\u0300',
+    '\u1fe3':'\u03c5\u0308\u0301', '\u1fe4':'\u03c1\u0313', '\u1fe6':'\u03c5\u0342',
+    '\u1fe7':'\u03c5\u0308\u0342', '\u1ff2':'\u1f7c\u03b9', '\u1ff3':'\u03c9\u03b9', '\u1ff4':'\u03ce\u03b9',
+    '\u1ff6':'\u03c9\u0342', '\u1ff7':'\u03c9\u0342\u03b9', '\u1ffc':'\u03c9\u03b9', '\uab70':'\u13a0',
+    '\uab71':'\u13a1', '\uab72':'\u13a2', '\uab73':'\u13a3', '\uab74':'\u13a4', '\uab75':'\u13a5',
+    '\uab76':'\u13a6', '\uab77':'\u13a7', '\uab78':'\u13a8', '\uab79':'\u13a9', '\uab7a':'\u13aa',
+    '\uab7b':'\u13ab', '\uab7c':'\u13ac', '\uab7d':'\u13ad', '\uab7e':'\u13ae', '\uab7f':'\u13af',
+    '\uab80':'\u13b0', '\uab81':'\u13b1', '\uab82':'\u13b2', '\uab83':'\u13b3', '\uab84':'\u13b4',
+    '\uab85':'\u13b5', '\uab86':'\u13b6', '\uab87':'\u13b7', '\uab88':'\u13b8', '\uab89':'\u13b9',
+    '\uab8a':'\u13ba', '\uab8b':'\u13bb', '\uab8c':'\u13bc', '\uab8d':'\u13bd', '\uab8e':'\u13be',
+    '\uab8f':'\u13bf', '\uab90':'\u13c0', '\uab91':'\u13c1', '\uab92':'\u13c2', '\uab93':'\u13c3',
+    '\uab94':'\u13c4', '\uab95':'\u13c5', '\uab96':'\u13c6', '\uab97':'\u13c7', '\uab98':'\u13c8',
+    '\uab99':'\u13c9', '\uab9a':'\u13ca', '\uab9b':'\u13cb', '\uab9c':'\u13cc', '\uab9d':'\u13cd',
+    '\uab9e':'\u13ce', '\uab9f':'\u13cf', '\uaba0':'\u13d0', '\uaba1':'\u13d1', '\uaba2':'\u13d2',
+    '\uaba3':'\u13d3', '\uaba4':'\u13d4', '\uaba5':'\u13d5', '\uaba6':'\u13d6', '\uaba7':'\u13d7',
+    '\uaba8':'\u13d8', '\uaba9':'\u13d9', '\uabaa':'\u13da', '\uabab':'\u13db', '\uabac':'\u13dc',
+    '\uabad':'\u13dd', '\uabae':'\u13de', '\uabaf':'\u13df', '\uabb0':'\u13e0', '\uabb1':'\u13e1',
+    '\uabb2':'\u13e2', '\uabb3':'\u13e3', '\uabb4':'\u13e4', '\uabb5':'\u13e5', '\uabb6':'\u13e6',
+    '\uabb7':'\u13e7', '\uabb8':'\u13e8', '\uabb9':'\u13e9', '\uabba':'\u13ea', '\uabbb':'\u13eb',
+    '\uabbc':'\u13ec', '\uabbd':'\u13ed', '\uabbe':'\u13ee', '\uabbf':'\u13ef', '\ufb00':'\u0066\u0066',
+    '\ufb01':'\u0066\u0069', '\ufb02':'\u0066\u006c', '\ufb03':'\u0066\u0066\u0069',
+    '\ufb04':'\u0066\u0066\u006c', '\ufb05':'\u0073\u0074', '\ufb06':'\u0073\u0074', '\ufb13':'\u0574\u0576',
+    '\ufb14':'\u0574\u0565', '\ufb15':'\u0574\u056b', '\ufb16':'\u057e\u0576', '\ufb17':'\u0574\u056d',
+  };
+  // KEY_FOLD:end
+  function foldKeyCase(text) {
+    return Array.from(text).map(function (c) {
+      return Object.prototype.hasOwnProperty.call(KEY_FOLD, c) ? KEY_FOLD[c] : c.toLowerCase();
+    }).join('');
+  }
+  function normalizeKeyText(value) {
+    var text = foldKeyCase(String(value).replace(KEY_TRIM, '').normalize('NFKC')).normalize('NFKC');
+    var whole = /^([0-9]+)\.0+$/.exec(text);   // 42.0 is the key 42 (#903)
+    if (whole) text = whole[1];
+    if (/^[0-9]+$/.test(text)) text = text.replace(/^0+/, '') || '0';
+    return text;
+  }
+
+  function parseHeldOut(heldTable, column, table, already, key, normalize) {
     if (!column) throw new Error('held-out column name is required');
     if (heldTable.columns.indexOf(column) === -1) {
       throw new Error("held-out column '" + column + "' not found in the held-out file");
@@ -845,9 +1184,50 @@
     if (already && Object.prototype.hasOwnProperty.call(already, column)) {
       throw new Error("held-out column '" + column + "' was already supplied");
     }
+    // A trailing ~ / ! on the key is the CLI's per-spec marker (normalise / keep exact), honoured
+    // only when what is left names a column, like proxy.py resolve_key_marker (#912, #907).
+    var marker = key ? /[~!]$/.exec(key) : null;
+    if (marker && keyColumns(key.slice(0, -1), table.columns) !== null) {
+      normalize = marker[0] === '~';
+      key = key.slice(0, -1);
+    }
+    if (key) {
+      var keyCols = keyColumns(key, table.columns);
+      if (keyCols === null) {
+        throw new Error("join key '" + key + "' not found in the profiled dataset");
+      }
+      if (!keyCols.every(function (c) { return heldTable.columns.indexOf(c) !== -1; })) {
+        throw new Error("join key '" + key + "' not found in the held-out file");
+      }
+      var keyLabels = function (rows, what) {
+        var seen = Object.create(null), labels = rows.map(function (r) {
+          var v = keyCols.map(function (c) {
+            var cell = r[c];
+            if (cell === null || cell === undefined) {
+              throw new Error('join key ' + what + ' has empty values - keys must all be present');
+            }
+            return normalize ? normalizeKeyText(cell) : String(cell);
+          }).join('\u001f');
+          if (seen[v]) throw new Error('join key ' + what + " has duplicate values (e.g. '" + v + "') - keys must be unique");
+          seen[v] = 1;
+          return v;
+        });
+        return labels;
+      };
+      var dfKeys = keyLabels(table.rows, "'" + key + "' in the profiled dataset");
+      var heldKeys = keyLabels(heldTable.rows, "'" + key + "' in the held-out file");
+      var lookup = Object.create(null);
+      heldKeys.forEach(function (k, i) { lookup[k] = heldTable.rows[i][column]; });
+      var missing = dfKeys.filter(function (k) { return !(k in lookup); });
+      if (missing.length) {
+        throw new Error('held-out file has no row for ' + missing.length + " key(s) of the profiled dataset (e.g. '" +
+          missing[0] + "')");
+      }
+      return dfKeys.map(function (k) { return lookup[k]; });
+    }
     if (heldTable.rows.length !== table.rows.length) {
       throw new Error('held-out file has ' + heldTable.rows.length + ' row(s), but the profiled ' +
-        'dataset has ' + table.rows.length + ' - rows must align 1:1');
+        'dataset has ' + table.rows.length + ' - rows must align 1:1 (or add a join key)');
     }
     return heldTable.rows.map(function (r) { return r[column]; });
   }
@@ -871,29 +1251,185 @@
   }
 
   // Build a held-out map from several uploaded files (#801, #802, #803).
-  // specs = [{name, column, data}] where `data` is text (csv/tsv/json) or an
+  // specs = [{name, column, key?, data}] where `data` is text (csv/tsv/json) or an
   // ArrayBuffer (.xlsx, first sheet - the same reader the main dropzone uses).
   // Every spec goes through parseHeldOut, with the running map as `already`,
   // so two specs naming the same column are rejected like the CLI's repeated
   // --proxy-hints-with.
-  async function buildHeldOut(specs, table) {
-    var out = {};
+  //
+  // Only an .xlsx workbook's first sheet is read (#816). When `notes` (an array)
+  // is passed, a note is pushed for every workbook with other sheets, like the
+  // CLI's per-held-out-file "other sheet(s) ignored" line; and if the requested
+  // column is missing from such a workbook, the error says which sheets were skipped.
+  async function buildHeldOut(specs, table, notes, maxCategoricalCard) {
+    if (maxCategoricalCard === undefined || maxCategoricalCard === null) maxCategoricalCard = DEFAULT_OPTS.max_categorical_card;
+    var out = {}, supplied = {};   // supplied: kept or skipped, so a column named twice is an error either way (#980)
     for (var i = 0; i < specs.length; i++) {
-      var spec = specs[i], heldTable;
-      if (/\.xlsx$/i.test(spec.name)) heldTable = (await parseXLSX(spec.data)).table;
+      var spec = specs[i], heldTable, sheetNote = null;
+      if (/\.xlsx$/i.test(spec.name)) {
+        var sheets = await parseXLSX(spec.data);
+        heldTable = sheets.table;
+        if (spec.encodingIgnored && notes) {   // same wording as loaders_extra.ENCODING_IGNORED_NOTE (#952)
+          notes.push('encoding has no effect on .xlsx/.parquet files (held-out file ' + spec.name + ')');
+        }
+        spec.sheet = sheets.sheetName;                       // recorded in provenance (#899)
+        spec.sheetsIgnored = sheets.ignoredSheets.length;
+        if (sheets.ignoredSheets.length > 0) {
+          sheetNote = spec.name + ": only the first sheet '" + sheets.sheetName + "' was read; " +
+            sheets.ignoredSheets.map(function (n) { return "'" + n + "'"; }).join(', ') +
+            ' ignored';
+          if (notes) notes.push(sheetNote);
+        }
+      }
       else if (/\.json$/i.test(spec.name)) heldTable = parseJSON(spec.data);
       else heldTable = parseCSV(spec.data);
-      out[spec.column] = parseHeldOut(heldTable, spec.column, table, out);
+      try {
+        var values = parseHeldOut(heldTable, spec.column, table, supplied, spec.key, spec.normalize);
+        supplied[spec.column] = true;
+        // A near-unique column (an ID, free text) is skipped with a note, like proxy.py
+        // _keep_held_out (#908).
+        var seen = Object.create(null), distinct = 0, present = 0;
+        values.forEach(function (v) {
+          if (v === null || v === undefined || v === '') return;
+          present++;
+          if (!seen[v]) { seen[v] = 1; distinct++; }
+        });
+        var numeric = present > 0 && values.every(function (v) {
+          var s = typeof v === 'number' && isFinite(v) ? String(v) : (typeof v === 'string' ? v : '');
+          return /^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/.test(s);
+        });
+        spec.skipped = false; spec.skipNote = undefined;
+        if (distinct > maxCategoricalCard && distinct >= NEAR_UNIQUE_SHARE * present && !numeric) {
+          // Recorded on the spec so the exports can say tested: false and carry the note (#951).
+          spec.skipped = true;
+          spec.skipNote = "held-out column '" + spec.column + "' has " + distinct + ' distinct values (more than ' +
+            maxCategoricalCard + ' and nearly one per row) - it looks like an identifier, not a group, so it was not tested';
+          if (notes) notes.push(spec.skipNote);
+        } else {
+          out[spec.column] = values;
+        }
+      } catch (err) {
+        if (sheetNote && heldTable.columns.indexOf(spec.column) === -1) {
+          err.message += ' (' + sheetNote + ')';
+        }
+        throw err;
+      }
     }
     return out;
   }
 
-  function proxyHints(table, dimensions, alpha, heldOut, multiCorrection) {
+  // faircode/proxy.py LOW_EXPECTED_COUNT / LOW_EXPECTED_SHARE (#810): a table is
+  // `low_expected` when over 20% of its cells expect fewer than 5 rows, which
+  // makes the chi-squared p-value unreliable. Must mirror proxy.py.
+  var LOW_EXPECTED_COUNT = 5, LOW_EXPECTED_SHARE = 0.2;
+
+  // Exact-test fallback for small-cell tables (#861); mirrors faircode/proxy.py
+  // (PERMUTATIONS, PERMUTATION_SEED, PERMUTATION_MAX_ROWS, _mulberry32).
+  var PERMUTATIONS = 1000, PERMUTATION_SEED = 42, PERMUTATION_MAX_ROWS = 20000, MAX_PERMUTATIONS = 1000000;
+  // Share of non-null rows that distinct values must reach (beyond max_categorical_card) for a held-out
+  // column to count as near-unique; mirrors proxy.py NEAR_UNIQUE_SHARE (#957).
+  var NEAR_UNIQUE_SHARE = 0.5;
+
+  function mulberry32(seed) {
+    var a = seed | 0;
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Two-sided Fisher exact p for [[a, b], [c, d]], matching scipy.stats.fisher_exact:
+  // the sum of every table probability not above the observed one (relative 1e-7).
+  function fisherExact2x2(a, b, c, d) {
+    var n1 = a + b, m1 = a + c, n = a + b + c + d;
+    var logFact = [0], i;
+    for (i = 1; i <= n; i++) logFact.push(logFact[i - 1] + Math.log(i));
+    function logChoose(nn, kk) { return logFact[nn] - logFact[kk] - logFact[nn - kk]; }
+    function pmf(x) { return Math.exp(logChoose(m1, x) + logChoose(n - m1, n1 - x) - logChoose(n, n1)); }
+    var lo = Math.max(0, n1 - (n - m1)), hi = Math.min(n1, m1);
+    var pObs = pmf(a), p = 0;
+    for (var x = lo; x <= hi; x++) {
+      var px = pmf(x);
+      if (px <= pObs * (1 + 1e-7)) p += px;
+    }
+    return Math.min(1, p);
+  }
+
+  // Statistic is sum(o^2 / e) - n over occupied cells only (an empty cell adds exactly its
+  // expected count, which sums to n), so a sparse table costs O(rows) per shuffle (#886).
+  // Mirrors proxy.py permutation_p_value.
+  function permutationPValue(rowIdx, colIdx, nRows, nCols, permutations) {
+    if (permutations === undefined) permutations = PERMUTATIONS;
+    var n = rowIdx.length, rowTot = [], colTot = [], i, r, c;
+    for (r = 0; r < nRows; r++) rowTot.push(0);
+    for (c = 0; c < nCols; c++) colTot.push(0);
+    for (i = 0; i < n; i++) { rowTot[rowIdx[i]]++; colTot[colIdx[i]]++; }
+    function statistic(cols) {
+      var counts = new Map(), k, s = 0;
+      for (k = 0; k < n; k++) {
+        var key = rowIdx[k] * nCols + cols[k];
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      counts.forEach(function (o, key) {
+        s += o * o / (rowTot[Math.floor(key / nCols)] * colTot[key % nCols] / n);
+      });
+      return s - n;
+    }
+    var observed = statistic(colIdx), rand = mulberry32(PERMUTATION_SEED), cols = colIdx.slice(), hits = 0;
+    for (var b = 0; b < permutations; b++) {
+      for (i = n - 1; i > 0; i--) {
+        var j = Math.floor(rand() * (i + 1)), tmp = cols[i];
+        cols[i] = cols[j]; cols[j] = tmp;
+      }
+      if (statistic(cols) >= observed - 1e-9) hits++;
+    }
+    return (1 + hits) / (permutations + 1);
+  }
+
+  // Suffix for a hint's text line, mirroring report.py's _hint_notes() minus the
+  // adjusted p-value (each renderer formats that itself).
+  function proxyNotes(h) {
+    if (!h.low_expected) return '';
+    return (h.p_method === 'fisher' || h.p_method === 'permutation')
+      ? ', small cells (' + h.p_method + ' exact p)'
+      : h.p_method === 'chi2-capped' ? ', small cells (too large for the exact fallback, p-value unreliable)'
+        : ', small cells (p-value unreliable)';
+  }
+
+  // " (m=N pairs)" - the family size an adjusted p was computed over (#821).
+  function proxyFamily(h) {
+    return h.p_adjusted !== undefined && h.n_tests !== undefined ? ' (m=' + h.n_tests + ' pairs)' : '';
+  }
+
+  // The web inputs for the exact test's shuffles and row cap: blank means the default, anything else must
+  // be a whole number (shuffles at most MAX_PERMUTATIONS), like the CLI flags (#925).
+  function parseExactSettings(permutationsText, maxRowsText) {
+    function whole(text, what, limit) {
+      text = String(text === undefined || text === null ? '' : text).trim();
+      if (text === '') return undefined;
+      var n = Number(text);
+      if (!/^[0-9]+$/.test(text) || n < 1 || (limit && n > limit)) {
+        throw new Error(what + ' must be a whole number from 1' + (limit ? ' to ' + limit.toLocaleString('en-US') : '') + '.');
+      }
+      return n;
+    }
+    return { permutations: whole(permutationsText, 'Shuffles', MAX_PERMUTATIONS), maxRows: whole(maxRowsText, 'Row cap') };
+  }
+
+  function proxyHints(table, dimensions, alpha, heldOut, multiCorrection, maxAge, referenceYear, exact, permutations, maxRows) {
     if (alpha === undefined) alpha = PROXY_ALPHA;
+    if (permutations === undefined || permutations === null) permutations = PERMUTATIONS;
+    if (maxRows === undefined || maxRows === null) maxRows = PERMUTATION_MAX_ROWS;
+    [['permutations', permutations], ['max_rows', maxRows]].forEach(function (kv) {
+      if (!(Number.isInteger(kv[1]) && kv[1] >= 1)) throw new Error(kv[0] + ' must be a positive integer, got ' + kv[1]);
+    });
+    if (permutations > MAX_PERMUTATIONS) throw new Error('permutations must be at most ' + MAX_PERMUTATIONS.toLocaleString('en-US') + ', got ' + permutations.toLocaleString('en-US'));
     if (!(alpha > 0 && alpha <= 1)) throw new Error('alpha must be in (0, 1], got ' + alpha);
     if (multiCorrection) adjustPValues([], multiCorrection); // validates the method name
     var labelized = {}, i, j, k;
-    dimensions.forEach(function (d) { labelized[d.name] = labelize(table, d.name, d.kind); });
+    dimensions.forEach(function (d) { labelized[d.name] = labelize(table, d.name, d.kind, maxAge, referenceYear); });
     Object.keys(heldOut || {}).forEach(function (name) { labelized[name] = heldOut[name]; });
     var names = Object.keys(labelized);
     var nTotal = table.rows.length;
@@ -931,11 +1467,12 @@
         // continuity correction applies only when dof === 1 (a 2x2 table).
         var dof = (aKeys.length - 1) * (bKeys.length - 1);
         var correction = dof === 1;
-        var chi2 = 0;
+        var chi2 = 0, lowCells = 0;
         aKeys.forEach(function (av) {
           bKeys.forEach(function (bv) {
             var observed = ct[av + '\0' + bv] || 0;
             var expected = (rowTotals[av] * colTotals[bv]) / n;
+            if (expected < LOW_EXPECTED_COUNT) lowCells++;
             if (!expected) return;
             var diff = Math.abs(observed - expected);
             if (correction) diff = Math.max(0, diff - 0.5);
@@ -946,22 +1483,51 @@
         var pValue = chiSquarePValue(chi2, dof);
         var kMinusOne = Math.min(aKeys.length, bKeys.length) - 1;
         var cramersV = (n && kMinusOne) ? Math.sqrt(chi2 / (n * kMinusOne)) : 0;
-        tested.push({
+        var lowShare = lowCells / (aKeys.length * bKeys.length);
+        var hint = {
           a: nameA, b: nameB,
           p_value: pValue,
           cramers_v: Math.round(cramersV * 10000) / 10000,
-          chi2: Math.round(chi2 * 100) / 100
-        });
+          chi2: Math.round(chi2 * 100) / 100,
+          low_expected_share: Math.round(lowShare * 10000) / 10000,
+          low_expected: lowShare > LOW_EXPECTED_SHARE
+        };
+        if (exact) {
+          hint.p_method = 'chi2';
+          if (hint.low_expected) {
+            if (aKeys.length === 2 && bKeys.length === 2) {
+              var cell = function (av, bv) { return ct[av + '\0' + bv] || 0; };
+              hint.p_chi2 = pValue;
+              hint.p_value = fisherExact2x2(cell(aKeys[0], bKeys[0]), cell(aKeys[0], bKeys[1]),
+                                            cell(aKeys[1], bKeys[0]), cell(aKeys[1], bKeys[1]));
+              hint.p_method = 'fisher';
+            } else if (n <= maxRows) {
+              var aIndex = Object.create(null), bIndex = Object.create(null), rowIdx = [], colIdx = [];
+              aKeys.forEach(function (v, vi) { aIndex[v] = vi; });
+              bKeys.forEach(function (v, vi) { bIndex[v] = vi; });
+              for (k = 0; k < nTotal; k++) {
+                if (la[k] === null || lb[k] === null) continue;
+                rowIdx.push(aIndex[la[k]]); colIdx.push(bIndex[lb[k]]);
+              }
+              hint.p_chi2 = pValue;
+              hint.p_value = permutationPValue(rowIdx, colIdx, aKeys.length, bKeys.length, permutations);
+              hint.p_method = 'permutation';
+            } else {
+              hint.p_method = 'chi2-capped';
+            }
+          }
+        }
+        tested.push(hint);
       }
     }
+    tested.forEach(function (h) { h.n_tests = tested.length; });
     if (!multiCorrection) {
       tested.forEach(function (h) { if (h.p_value < alpha) hints.push(h); });
     } else {
       var adjusted = adjustPValues(tested.map(function (h) { return h.p_value; }), multiCorrection);
       tested.forEach(function (h, idx) {
         if (adjusted[idx] < alpha) {
-          hints.push({ a: h.a, b: h.b, p_value: h.p_value, cramers_v: h.cramers_v,
-                       chi2: h.chi2, p_adjusted: adjusted[idx] });
+          hints.push(Object.assign({}, h, { p_adjusted: adjusted[idx] }));
         }
       });
     }
@@ -985,13 +1551,26 @@
   // Provenance section for CSV exports (#800), mirroring faircode/report.py's
   // _write_provenance_rows: nested objects become dotted keys (params.min_share),
   // arrays become JSON text (Python's ', ' separators), null becomes empty.
+  // JSON text formatted like Python's json.dumps() (", " and ": " separators,
+  // non-ASCII escaped) so a list of objects - the held-out file entries (#811) -
+  // renders identically in the web and CLI provenance CSV.
+  function pyJson(v) {
+    if (Array.isArray(v)) return '[' + v.map(pyJson).join(', ') + ']';
+    if (v !== null && typeof v === 'object') {
+      return '{' + Object.keys(v).map(function (k) { return pyJson(k) + ': ' + pyJson(v[k]); }).join(', ') + '}';
+    }
+    return JSON.stringify(v).replace(/[\u007f-\uffff]/g, function (c) {
+      return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+    });
+  }
+
   function provenanceCsv(prov) {
     var out = csvRow(['provenance_key', 'provenance_value']);
     (function walk(obj, prefix) {
       Object.keys(obj).forEach(function (k) {
         var v = obj[k], name = prefix + k;
         if (Array.isArray(v)) {
-          out += csvRow([name, '[' + v.map(function (x) { return JSON.stringify(x); }).join(', ') + ']']);
+          out += csvRow([name, pyJson(v)]);
         } else if (v !== null && typeof v === 'object') {
           walk(v, name + '.');
         } else {
@@ -1043,9 +1622,10 @@
     return flags;
   }
 
-  function buildFlags(dimensions, inters, imbalanceFlag, missingFlag) {
+  function buildFlags(dimensions, inters, imbalanceFlag, missingFlag, maxAge) {
     if (imbalanceFlag === undefined) imbalanceFlag = IMBALANCE_FLAG;
     if (missingFlag === undefined) missingFlag = MISSING_FLAG;
+    if (maxAge === undefined) maxAge = MAX_AGE;
     var flags = [];
     dimensions.forEach(function (d) {
       d.groups.forEach(function (g) {
@@ -1070,6 +1650,17 @@
         flags.push(d.name + ': ' + (d.missing_pct * 100).toFixed(1) +
                    '% of values are missing');
       }
+      if (d.implausible_values) {
+        if (d.has_negative_ages) {
+          flags.push(d.name + ': ' + d.implausible_values + ' sentinel/implausible age value(s) ' +
+                     '(negative or above ' + maxAge + ') were treated as missing, not banded ' +
+                     '(a mistyped age, birth year, or sentinel code?)');
+        } else {
+          flags.push(d.name + ': ' + d.implausible_values + ' implausible age value(s) above ' +
+                     maxAge + ' were treated as missing, not banded ' +
+                     '(a mistyped age or a birth year?)');
+        }
+      }
     });
     inters.forEach(function (inter) {
       var a = inter.dims[0], b = inter.dims[1];
@@ -1085,9 +1676,9 @@
   function profile(table, overrides, opts) {
     overrides = overrides || {};
     var o = resolveOpts(opts);
-    var detected = detectColumns(table, overrides, o.max_categorical_card);
+    var detected = detectColumns(table, overrides, o.max_categorical_card, o.keywords);
     var dimensions = detected.map(function (d) {
-      return dimension(table, d.name, d.kind, o.min_share, o.min_group_size);
+      return dimension(table, d.name, d.kind, o.min_share, o.min_group_size, o.max_age, o.age_reference_year);
     });
     var forced = {};
     Object.keys(overrides).forEach(function (col) {
@@ -1106,7 +1697,7 @@
         throw new Error("cross column(s) don't match any profiled dimension: " + unknownCross.join(", "));
       }
     }
-    var inters = intersections(table, detected, o.intersection_floor, o.cross);
+    var inters = intersections(table, detected, o.intersection_floor, o.cross, o.max_age, o.age_reference_year);
 
     var refFlags = [];
     if (o.reference) {
@@ -1152,7 +1743,10 @@
       note: note,
       dimensions: dimensions,
       intersections: inters,
-      flags: buildFlags(dimensions, inters, o.imbalance_flag, o.missing_flag).concat(refFlags)
+      flags: buildFlags(dimensions, inters, o.imbalance_flag, o.missing_flag, o.max_age).concat(refFlags)
+        .concat(dimensions.length && !Object.keys(overrides).length &&
+                dimensions.every(function (d) { return d.kind === 'categorical'; })
+                ? [NO_KIND_DETECTED_FLAG] : [])
     };
   }
 
@@ -1186,9 +1780,10 @@
       // numeric literal (unlike parseFloat, which parses only a leading
       // prefix - "60abc" -> 60, "1e1junk" -> 10), and rejects '' the same
       // way Python's float('') raises. Mirrors faircode.profiler.parse_reference.
-      if (text === '') return;
+      // Plain decimals only (no nan, Infinity, 0x10 or 1_0), like parse_reference in Python (#1002).
+      if (!/^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/.test(text)) return;
       var share = Number(text);
-      if (isNaN(share)) return;
+      if (!isFinite(share)) return;
       raw.push([String(row[colC]).trim(), String(row[grpC]).trim(), share, alreadyScaled]);
     });
     // Percent-vs-fraction scale is decided per column (grouped by the column
@@ -1274,10 +1869,12 @@
       var a = sa[label] || 0, b = sb[label] || 0;
       psiTotal += psiTerm(a, b);
       tvdTotal += Math.abs(b - a);
+      var delta = round(b - a, 4);
       var status = (a === 0 && b > 0) ? 'appeared'
-                 : (a > 0 && b === 0) ? 'disappeared' : 'shifted';
+                 : (a > 0 && b === 0) ? 'disappeared'
+                 : (delta === 0) ? 'unchanged' : 'shifted';
       groups.push({ label: String(label), share_a: round(a, 4),
-                    share_b: round(b, 4), share_delta: round(b - a, 4),
+                    share_b: round(b, 4), share_delta: delta,
                     status: status });
     });
     // most-shifted first, then label asc - matches Python.
@@ -1300,8 +1897,152 @@
     };
   }
 
-  function compare(resultA, resultB, nameA, nameB) {
+  // Mirrors faircode/compare.py RENAME_MIN_OVERLAP / _possible_renames (#866).
+  var RENAME_MIN_OVERLAP = 0.5;
+
+  // One-to-one label match: exact, then case-insensitive, then alphabetic prefix; Jaccard of
+  // the result. Mirrors compare.py _label_overlap (#887).
+  function labelOverlap(labelsA, labelsB) {
+    var restA = labelsA.slice().sort(), restB = labelsB.slice().sort(), matched = 0;
+    function take(same) {
+      var left = [];
+      restA.forEach(function (a) {
+        var hit = -1;
+        for (var i = 0; i < restB.length; i++) if (same(a, restB[i])) { hit = i; break; }
+        if (hit === -1) left.push(a); else { restB.splice(hit, 1); matched++; }
+      });
+      restA = left;
+    }
+    function alphaPrefix(s, l) { return /^\p{L}+$/u.test(s) && l.indexOf(s) === 0; }
+    take(function (a, b) { return a === b; });
+    take(function (a, b) { return a.toLowerCase() === b.toLowerCase(); });
+    take(function (a, b) {
+      var x = a.toLowerCase(), y = b.toLowerCase();
+      return alphaPrefix(x, y) || alphaPrefix(y, x);
+    });
+    var total = labelsA.length + labelsB.length - matched;
+    return total ? matched / total : 0;
+  }
+
+  function uniqueLabels(dim) {
+    var seen = {}, out = [];
+    dim.groups.forEach(function (g) { if (!seen[g.label]) { seen[g.label] = 1; out.push(g.label); } });
+    return out;
+  }
+
+  // Mirrors compare.py RENAME_GENERIC_TOKENS / _name_tokens (#902); unicode
+  // letters keep accent and non-Latin words whole (#917).
+  var RENAME_GENERIC_TOKENS = { id: 1, code: 1, cd: 1, num: 1, no: 1, type: 1, group: 1, category: 1, cat: 1,
+                                class: 1, val: 1, value: 1, flag: 1, ind: 1 };
+  // Cut a letter run where a lower-case letter meets an upper-case one (SexCode -> Sex, Code), like
+  // compare.py _split_humps. No regex lookbehind: a lookbehind literal is a syntax error that stops the
+  // whole script on Safari before 16.4 (#956).
+  var LOWER_LETTER = /^\p{Ll}$/u, UPPER_LETTER = /^\p{Lu}$/u;
+  function splitHumps(run) {
+    var parts = [], piece = '', prev = '';
+    Array.from(run).forEach(function (ch) {
+      if (prev && LOWER_LETTER.test(prev) && UPPER_LETTER.test(ch)) {
+        if (piece) parts.push(piece);
+        piece = ch;
+      } else {
+        piece += ch;
+      }
+      prev = ch;
+    });
+    if (piece) parts.push(piece);
+    return parts;
+  }
+
+  function nameTokens(name) {
+    var out = {};
+    (String(name).match(/\p{L}+|\d+/gu) || []).forEach(function (run) {
+      splitHumps(run).forEach(function (t) {
+        t = t.toLowerCase().normalize("NFD").replace(/\p{M}+/gu, "");
+        if (!RENAME_GENERIC_TOKENS[t]) out[t] = 1;
+      });
+    });
+    return out;
+  }
+
+  function possibleRenames(resultA, resultB, removed, added) {
+    var byA = {}, byB = {}, taken = {}, pairs = [];
+    resultA.dimensions.forEach(function (d) { byA[d.name] = d; });
+    resultB.dimensions.forEach(function (d) { byB[d.name] = d; });
+    removed.forEach(function (nameA) {
+      var labelsA = uniqueLabels(byA[nameA]);
+      var best = null, bestOverlap = 0;
+      added.forEach(function (nameB) {
+        if (taken[nameB] || byB[nameB].kind !== byA[nameA].kind) return;
+        var overlap = labelOverlap(labelsA, uniqueLabels(byB[nameB]));
+        if (overlap > bestOverlap) { best = nameB; bestOverlap = overlap; }
+      });
+      if (best !== null && bestOverlap >= RENAME_MIN_OVERLAP) {
+        taken[best] = 1;
+        pairs.push({ a: nameA, b: best, overlap: Math.round(bestOverlap * 10000) / 10000, reason: 'labels' });
+      }
+    });
+    // Second signal: same kind, close group counts, names sharing a word; most shared words, then the
+    // closest count wins (#902, #918). Mirrors compare.py.
+    var paired = {};
+    pairs.forEach(function (p) { paired[p.a] = 1; });
+    removed.forEach(function (nameA) {
+      if (paired[nameA]) return;
+      var tokensA = nameTokens(nameA), countA = byA[nameA].groups.length, best = null, bestShared = 0, bestGap = 0;
+      added.forEach(function (nameB) {
+        if (taken[nameB] || byB[nameB].kind !== byA[nameA].kind) return;
+        var countB = byB[nameB].groups.length, gap = Math.abs(countA - countB);
+        if (gap > Math.max(1, Math.floor(Math.max(countA, countB) / 4))) return;
+        var shared = 0, tokensB = nameTokens(nameB);
+        Object.keys(tokensA).forEach(function (t) { if (tokensB[t]) shared++; });
+        if (shared && (best === null || shared > bestShared || (shared === bestShared && gap < bestGap))) {
+          best = nameB; bestShared = shared; bestGap = gap;
+        }
+      });
+      if (best !== null) {
+        taken[best] = 1;
+        var pair = { a: nameA, b: best, overlap: 0, reason: 'names' };
+        if (countA !== byB[best].groups.length) pair.group_counts = [countA, byB[best].groups.length];
+        pairs.push(pair);
+      }
+    });
+    return pairs;
+  }
+
+  // Mirrors compare.py apply_renames (#913): a copy of resultB with each renames[aName] dimension
+  // renamed to aName.
+  function applyRenames(resultA, resultB, renames) {
+    var namesA = {}, namesB = {}, byB = {};
+    resultA.dimensions.forEach(function (d) { namesA[d.name] = 1; });
+    resultB.dimensions.forEach(function (d) { namesB[d.name] = 1; });
+    Object.keys(renames).forEach(function (aName) {
+      var bName = renames[aName];
+      if (!namesA[aName]) throw new Error("--rename: '" + aName + "' is not a dimension of the first dataset");
+      if (!namesB[bName]) throw new Error("--rename: '" + bName + "' is not a dimension of the second dataset");
+      if (aName === bName) throw new Error("--rename: '" + aName + "' renames a dimension to itself");
+      if (namesB[aName]) throw new Error("--rename: the second dataset already has a dimension named '" + aName + "'");
+      if (byB[bName]) throw new Error("--rename: '" + bName + "' is renamed more than once");
+      byB[bName] = aName;
+    });
+    var out = Object.assign({}, resultB);
+    out.dimensions = resultB.dimensions.map(function (d) {
+      return byB[d.name] ? Object.assign({}, d, { name: byB[d.name] }) : d;
+    });
+    return out;
+  }
+
+  // Why a possible rename was suggested, as flag/report text; mirrors compare.py rename_evidence (#953).
+  function renameEvidence(r) {
+    if (r.reason === 'names') {
+      return r.group_counts ? 'similar names and a similar number of groups (' + r.group_counts[0] + ' vs ' + r.group_counts[1] + ')'
+                            : 'similar names and the same number of groups';
+    }
+    return (r.overlap * 100).toFixed(0) + '% of their group labels overlap';
+  }
+
+  function compare(resultA, resultB, nameA, nameB, renameMap) {
     nameA = nameA || 'A'; nameB = nameB || 'B';
+    var renamedB = renameMap || {};
+    if (Object.keys(renamedB).length) resultB = applyRenames(resultA, resultB, renamedB);
     var dimsA = {}, dimsB = {};
     resultA.dimensions.forEach(function (d) { dimsA[d.name] = d; });
     resultB.dimensions.forEach(function (d) { dimsB[d.name] = d; });
@@ -1316,6 +2057,12 @@
     var dimensions = shared.map(function (n) {
       return compareDimension(dimsA[n], dimsB[n]);
     });
+    // Data-quality carry-over (#868): optional keys, only when either side has any.
+    dimensions.forEach(function (cd) {
+      var impA = dimsA[cd.name].implausible_values || 0, impB = dimsB[cd.name].implausible_values || 0;
+      if (impA || impB) { cd.implausible_a = impA; cd.implausible_b = impB; }
+    });
+    var renames = possibleRenames(resultA, resultB, removed, added);
     var scoreDelta = (resultA.overall_score === null || resultB.overall_score === null)
       ? null : resultB.overall_score - resultA.overall_score;
 
@@ -1338,6 +2085,11 @@
                    (cd.missing_pct_a * 100).toFixed(1) + '% → ' +
                    (cd.missing_pct_b * 100).toFixed(1) + '%');
         driftDetected = true;
+      }
+      if ((cd.implausible_a || 0) !== (cd.implausible_b || 0)) {
+        flags.push(cd.name + ': implausible age values differ (' + cd.implausible_a + ' in ' + nameA +
+                   ', ' + cd.implausible_b + ' in ' + nameB + ') - they were treated as missing in ' +
+                   'each, so check the age shares for artefacts');
       }
       if (cd.kind_mismatch) {
         if (cd.kind_a !== cd.kind_b) {
@@ -1372,8 +2124,23 @@
     });
     added.forEach(function (n) { flags.push("dimension '" + n + "' is present only in " + nameB); driftDetected = true; });
     removed.forEach(function (n) { flags.push("dimension '" + n + "' is present only in " + nameA); driftDetected = true; });
+    renames.forEach(function (r) {
+      var evidence = renameEvidence(r);
+      flags.push("'" + r.a + "' (" + nameA + ") and '" + r.b + "' (" + nameB + ') look like the same dimension (' +
+                 evidence + ') - rename one column so the names match to compare them');
+    });
+    [[nameA, resultA], [nameB, resultB]].forEach(function (pair) {
+      if ((pair[1].flags || []).indexOf(NO_KIND_DETECTED_FLAG) !== -1) {
+        flags.push(pair[0] + ': no column name was recognised as sex, race, age or geography, so every ' +
+                   'dimension is a plain categorical - map columns with --map COL=KIND');
+      }
+    });
 
-    return {
+    Object.keys(renamedB).forEach(function (a) {
+      flags.push("dimension '" + renamedB[a] + "' (" + nameB + ") was compared as '" + a + "' (" + nameA + ') because of --rename');
+    });
+
+    var out = {
       a: { name: nameA, n_rows: resultA.n_rows,
            overall_score: resultA.overall_score, grade: resultA.grade,
            dimensions_detected: resultA.dimensions_detected, note: resultA.note },
@@ -1384,16 +2151,103 @@
       added_dimensions: added, removed_dimensions: removed, flags: flags,
       drift_detected: driftDetected
     };
+    if (renames.length) out.possible_renames = renames;
+    var renamedKeys = Object.keys(renamedB);
+    if (renamedKeys.length) out.renamed_dimensions = renamedKeys.map(function (a) { return { a: a, b: renamedB[a] }; });
+    return out;
+  }
+
+  // ── Equivalent CLI command (#915) ─────────────────────────────────────────
+  // Builds the `faircode profile|compare ...` line that reproduces a web run, from the options the
+  // page holds. A keywords vocabulary becomes a heredoc that writes keywords-<hash>.json first. Held-out
+  // specs use the CLI's PATH=COLUMN[:KEY[~]][@ENCODING] syntax (#892, #914).
+  var CLI_THRESHOLD_FLAGS = [['min_share', '--min-share'], ['intersection_floor', '--intersection-floor'],
+    ['imbalance_flag', '--imbalance-flag'], ['missing_flag', '--missing-flag'], ['min_group_size', '--min-group-size'],
+    ['max_categorical_card', '--max-categorical-card'], ['max_dimension_groups', '--max-dimension-groups'],
+    ['max_age', '--max-age'], ['age_reference_year', '--age-reference-year']];
+
+  // 32-bit FNV-1a as 8 hex digits: a short, deterministic file-name suffix, not a security hash.
+  function fnv1aHex(text) {
+    var h = 0x811c9dc5, bytes = unescape(encodeURIComponent(String(text)));
+    for (var i = 0; i < bytes.length; i++) {
+      h ^= bytes.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return ('00000000' + h.toString(16)).slice(-8);
+  }
+
+  function shellQuote(text) {
+    text = String(text);
+    return /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(text) ? text : "'" + text.replace(/'/g, "'\\''") + "'";
+  }
+
+  function heldOutSpecText(h) {
+    var out = h.name + '=' + h.column;
+    if (h.key) out += ':' + h.key + (h.normalize ? '~' : '');
+    if (h.encoding) out += '@' + h.encoding;
+    return out;
+  }
+
+  // spec: {kind: 'profile'|'compare', files, opts, overrides, encoding, referenceName,
+  //        proxy: {alpha, correction, exact, permutations, maxRows} | null, held: {main, a, b}, renames}
+  function buildCliCommand(spec) {
+    var opts = spec.opts || {}, pre = '';
+    // The built-in sample has a CLI twin for profile (--sample); the compare sample pair is web-only,
+    // so its command says so and uses placeholder names (#928).
+    var args = ['faircode', spec.kind].concat(spec.sample && spec.kind === 'profile' ? ['--sample']
+      : (spec.files || []).map(shellQuote));
+    if (spec.sample && spec.kind === 'compare') {
+      pre = '# the sample pair is built into the web page: save both files from it, or use your own\n';
+    }
+    CLI_THRESHOLD_FLAGS.forEach(function (pair) {
+      if (opts[pair[0]] !== undefined && opts[pair[0]] !== null) args.push(pair[1], String(opts[pair[0]]));
+    });
+    if (opts.keywords && Object.keys(opts.keywords).length) {
+      // Named from the content (an FNV-1a hash), so pasting never overwrites an existing words.json or a
+      // different vocabulary's file (#944).
+      var wordsJson = JSON.stringify(opts.keywords), file = 'keywords-' + fnv1aHex(wordsJson) + '.json';
+      pre = 'cat > ' + file + " <<'EOF'\n" + wordsJson + '\nEOF\n';
+      args.push('--keywords', file);
+    }
+    if (spec.kind === 'profile' && opts.cross && opts.cross.length === 2) args.push('--cross', shellQuote(opts.cross.join(',')));
+    Object.keys(spec.overrides || {}).forEach(function (col) { args.push('--map', shellQuote(col + '=' + spec.overrides[col])); });
+    if (spec.encoding && spec.encoding !== 'auto') args.push('--encoding', shellQuote(spec.encoding));
+    if (spec.kind === 'profile' && spec.referenceName) args.push('--reference', shellQuote(spec.referenceName));
+    Object.keys(spec.renames || {}).forEach(function (a) { args.push('--rename', shellQuote(a + '=' + spec.renames[a])); });
+    // Outputs the page's controls mirror: --csv FILE [--csv-provenance] [--csv-bom], --html FILE, --json (#929).
+    var out = spec.outputs || {};
+    if (out.csv) args.push('--csv', shellQuote(out.csv));
+    if (out.csv && out.csvProvenance) args.push('--csv-provenance');
+    if (out.csv && out.csvBom) args.push('--csv-bom');
+    if (out.html) args.push('--html', shellQuote(out.html));
+    if (out.json) args.push('--json');
+    if (spec.proxy) {
+      var px = spec.proxy;
+      args.push('--proxy-hints');
+      if (px.alpha !== undefined && px.alpha !== PROXY_ALPHA) args.push('--proxy-alpha', String(px.alpha));
+      if (px.correction) args.push('--proxy-correction', px.correction);
+      if (px.exact) {
+        args.push('--proxy-exact');
+        if (px.permutations && px.permutations !== PERMUTATIONS) args.push('--proxy-exact-permutations', String(px.permutations));
+        if (px.maxRows && px.maxRows !== PERMUTATION_MAX_ROWS) args.push('--proxy-exact-max-rows', String(px.maxRows));
+      }
+      var held = spec.held || {};
+      [['main', '--proxy-hints-with'], ['a', '--proxy-hints-with-a'], ['b', '--proxy-hints-with-b']].forEach(function (pair) {
+        (held[pair[0]] || []).forEach(function (h) { args.push(pair[1], shellQuote(heldOutSpecText(h))); });
+      });
+    }
+    return pre + args.join(' ');
   }
 
   global.FairCodeProfiler = { parseCSV: parseCSV, parseJSON: parseJSON, parseXLSX: parseXLSX,
                               sniffDelimiter: sniffDelimiter,
-                              profile: profile, compare: compare,
+                              profile: profile, compare: compare, applyRenames: applyRenames, renameEvidence: renameEvidence, buildCliCommand: buildCliCommand,
                               parseReference: parseReference,
                               // Opt-in, informational only (issue #738) - see
                               // proxyHints()'s own comment for why this is
                               // kept out of profile()/compare().
-                              proxyHints: proxyHints, parseHeldOut: parseHeldOut, buildHeldOut: buildHeldOut,
+                              proxyHints: proxyHints, parseExactSettings: parseExactSettings, proxyNotes: proxyNotes, normalizeKeyText: normalizeKeyText, normalizeKeywords: normalizeKeywords, decodeText: decodeText, proxyFamily: proxyFamily, permutationPValue: permutationPValue, parseHeldOut: parseHeldOut, buildHeldOut: buildHeldOut,
+                              adjustPValues: adjustPValues,
                               csvField: csvField, csvRow: csvRow, provenanceCsv: provenanceCsv,
                               // publicParams: resolved knobs for an export's
                               // provenance.params, matching the Python path (#490).

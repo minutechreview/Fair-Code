@@ -6,7 +6,7 @@ scores differently under a different `--map`, a different `--min-share`, or a
 different reference baseline, and none of that was visible in the export.
 
 The block is attached at the export boundary rather than inside the engines,
-so the result shape in SPEC section 6 is unchanged and tests/test_js_parity.py
+so the result shape in SPEC section 6 is unchanged and tests/test_js_parity_*.py
 - which compares the two engine dicts with `==` - needs no edit.
 
 Design notes worth keeping:
@@ -37,6 +37,9 @@ _CHUNK = 1024 * 1024
 # reference table gets its own digest field, so echoing the whole parsed thing
 # into `params` would be noise.
 _OPAQUE_PARAMS = ("reference",)
+
+# Formats whose bytes carry no text encoding to record.
+_BINARY_SUFFIXES = (".xlsx", ".xls", ".parquet")
 
 
 def file_digest(path):
@@ -75,12 +78,111 @@ def public_params(resolved: dict) -> dict:
     return {k: v for k, v in sorted(resolved.items()) if k not in _OPAQUE_PARAMS}
 
 
-def build(digests=(), params=None, overrides=None) -> dict:
+def sheet_fields(path) -> dict:
+    """`{"sheet": name, "sheets_ignored": n}` for a readable .xlsx workbook, else {}:
+    which sheet was profiled (always the first) and how many others were skipped,
+    so a re-saved workbook with reordered sheets is not silently a "match" (#899)."""
+    if not path or path == "-":
+        return {}
+    from .loaders_extra import get_xlsx_sheet_info
+    info = get_xlsx_sheet_info(str(path))
+    return {} if info is None else {"sheet": info[0], "sheets_ignored": len(info[1])}
+
+
+def proxy_params(alpha, correction=None, exact=False, permutations=None, max_rows=None) -> dict:
+    """The proxy-hint settings recorded in `params` whenever hints were requested:
+    the significance level, the multiple-comparison correction (null when none)
+    and whether the exact-test fallback was on, so the same p-values can be
+    reproduced (#898). Same keys from the CLI, MCP and the web."""
+    params = {"alpha": alpha, "correction": correction, "exact": bool(exact)}
+    if exact:   # the exact-test settings that decide the p-values (#906)
+        from .proxy import PERMUTATION_MAX_ROWS, PERMUTATIONS
+        params["exact_permutations"] = PERMUTATIONS if permutations is None else permutations
+        params["exact_max_rows"] = PERMUTATION_MAX_ROWS if max_rows is None else max_rows
+    return params
+
+
+def held_out_entries(specs, profiled_columns=None, key_normalize=False, encoding=None, skipped=()) -> list:
+    """Provenance entries for repeated PATH=COLUMN held-out specs (#811).
+
+    One {path, column, sha256} per spec (plus `key` when a join key was given), in the order given; an unreadable path
+    (or stdin) gets a null `sha256` and a `sha256_note`, like every other digest.
+    `key_normalize` adds `key_normalize: true` to entries that have a join key (#859);
+    a spec ending in `~` does so for that entry alone (#892) and `!` switches it off for that entry (#907).
+    `encoding` is the per-spec `@ENCODING` choice when present, otherwise the
+    explicit --encoding choice; each text file's entry records it, or its own
+    sniffed byte-order mark, and omits it for plain UTF-8 and for binary
+    workbooks/Parquet, the same rule as the dataset's `encoding` (#891, #914).
+    `skipped` names the columns left out as near-unique; their entries say `tested: false`
+    with a `skip_reason` so the export does not claim the file was used (#921).
+    `profiled_columns` is forwarded to split_held_out_spec so a colon in a
+    column name is resolved the same way as the live parse (#869).
+    """
+    from .proxy import resolve_key_marker, split_held_out_encoding, split_held_out_spec
+
+    entries = []
+    for spec in specs or []:
+        spec, spec_encoding = split_held_out_encoding(spec)
+        spec, normalize = resolve_key_marker(spec, profiled_columns, key_normalize)
+        path, column, key = split_held_out_spec(spec, profiled_columns)
+        entry = {"path": path, "column": column}
+        if key is not None:
+            entry["key"] = key
+            if normalize:
+                entry["key_normalize"] = True
+        _add_digest(entry, "sha256", path)
+        entry.update(sheet_fields(path))
+        if column in skipped:
+            entry.update({"tested": False, "skip_reason": "near-unique values (looks like an identifier)"})
+        if not str(path).lower().endswith(_BINARY_SUFFIXES):
+            enc = sniff_effective_encoding(path, spec_encoding or encoding)
+            if enc:
+                entry["encoding"] = enc
+        entries.append(entry)
+    return entries
+
+
+def sniff_effective_encoding(path: str | None, explicit_encoding: str | None = None) -> str | None:
+    """Return explicit encoding or sniffed BOM encoding, or None for plain UTF-8 default.
+
+    When `explicit_encoding` is provided (e.g. from --encoding), it is recorded.
+    Otherwise, if the file starts with a known byte-order mark (BOM), the BOM
+    encoding is recorded. For the plain UTF-8 default without a BOM, returns
+    None so the provenance block keeps its existing shape (§10).
+    """
+    if explicit_encoding:
+        return explicit_encoding
+    if not path or path in (None, "", "-"):
+        return None
+    try:
+        from .loaders import sniff_bom_encoding
+        with open(path, "rb") as fh:
+            return sniff_bom_encoding(fh.read(4))
+    except OSError:
+        return None
+
+
+def build(digests=(), params=None, overrides=None, held_out=(), encodings=None,
+          key_normalize=False, held_out_encoding=None) -> dict:
     """Assemble the provenance block attached to an exported result.
 
     `digests` is a sequence of (field_name, path) pairs, emitted in the order
     given and immediately after the version fields, so the thing that
     identifies the run reads first.
+
+    `encodings` is an optional mapping of field_name to encoding string
+    (e.g. {"dataset_hash": "latin-1"} or {"dataset_hash_a": "utf-16"}), placed
+    immediately beside the corresponding digest field.
+
+    `held_out` is a sequence of (field_name, specs), (field_name, specs, profiled_columns) or
+    (field_name, specs, profiled_columns, skipped_columns) tuples for the files given to
+    `--proxy-hints-with`: each non-empty one is recorded as a list of
+    {path, column, sha256} after `overrides`, so the proxy results in the same
+    export can be tied to the files that produced them. Omitted when empty, so
+    a run without held-out files keeps its existing shape. The optional
+    profiled_columns list makes colon-in-column-name resolution match the
+    live parse (#869). `held_out_encoding` is the explicit encoding the held-out
+    files were read with, recorded per entry (#891).
     """
     block = {
         "faircode_version": __version__,
@@ -88,6 +190,23 @@ def build(digests=(), params=None, overrides=None) -> dict:
     }
     for field, path in digests:
         _add_digest(block, field, path)
+        if encodings and field in encodings and encodings[field]:
+            enc_key = "encoding" if field == "dataset_hash" else field.replace("dataset_hash_", "encoding_")
+            block[enc_key] = encodings[field]
+        suffix = field[len("dataset_hash"):] if field.startswith("dataset_hash") else None
+        if suffix is not None:   # sheet / sheet_a / sheet_b beside the dataset digest
+            block.update({k + suffix: v for k, v in sheet_fields(path).items()})
     block["params"] = public_params(params or {})
     block["overrides"] = dict(overrides or {})
+    for item in held_out:
+        skipped = ()
+        if len(item) == 4:
+            field, specs, columns, skipped = item
+        elif len(item) == 3:
+            field, specs, columns = item
+        else:
+            field, specs = item
+            columns = None
+        if specs:
+            block[field] = held_out_entries(specs, columns, key_normalize, held_out_encoding, skipped)
     return block

@@ -48,7 +48,7 @@ If you are unsure whether an idea fits, open an issue first and ask.
 > `assets/profiler-engine.js` together, and must keep them producing identical results (run
 > `pytest tests/` and cross-check a CSV through both). The same rule covers the two-dataset
 > **compare** (drift) view: `faircode/compare.py` and `assets/profiler-compare.js` must agree too,
-> enforced by `tests/test_js_parity.py::test_python_js_compare_parity` (via `scripts/engine-js.js compare`).
+> enforced by `tests/test_js_parity_profile.py::test_python_js_compare_parity` (via `scripts/engine-js.js compare`).
 > HTML report changes need the same treatment on both sides: `faircode/report.py`'s `to_html`/
 > `compare_to_html` and their hand-ported equivalents in `assets/profiler-ui.js`/
 > `assets/profiler-compare.js`. Update `SPEC.md` first - it is the source of truth.
@@ -63,10 +63,14 @@ A `Makefile` and a `.pre-commit-config.yaml` reproduce what CI runs, so you can 
 make setup             # install faircode + pytest + pre-commit + ruff
 make check             # everything CI runs: lint + full test suite + audits
 make test              # just the test suite
+make test-fast         # the suite minus the ~80 s model-training benchmark tests (marked `slow`); CI still runs everything; the pre-push hook uses the same fast set
 make audits            # every audit's unfair.py/fair.py + the CLI smoke tests (mirrors audits.yml's required run-audits job, plus the profiler/benchmark-harness jobs' CLI steps)
+make setup-browser     # once: install Playwright + Chromium for the browser smoke test (tests/browser, #988)
+make test-browser      # open profiler.html, benchmark.html and index.html in Chromium; fails on any console error
 make coverage          # test suite with pytest-cov line coverage (informational, not a CI gate)
 make build-explainers  # regenerate explainer pages, sitemap, and OG images (dark + light) after editing explainers/*.md
 make fix-explainer-count  # correct any stale "N explainers" mention in README/CONTRIBUTORS/METRICS/ROADMAP after adding/removing an explainer
+make key-fold         # regenerate the JS case-folding table (assets/profiler-engine.js KEY_FOLD) after a Unicode upgrade
 make favicons          # regenerate favicon.ico, apple-touch-icon.png, icon-{192,512}.png after editing logo.svg
 make lint              # em-dash-free check + broken internal doc link check + ruff (unused imports, undefined names)
 ```

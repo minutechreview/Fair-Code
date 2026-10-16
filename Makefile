@@ -5,7 +5,7 @@
 .DEFAULT_GOAL := help
 PY := python3
 
-.PHONY: help setup test coverage build-explainers favicons fix-explainer-count lint audits check
+.PHONY: help setup test test-fast test-browser setup-browser coverage key-fold key-fold-check build-explainers favicons fix-explainer-count lint audits check
 
 help:  ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -17,8 +17,23 @@ setup:  ## Install the package plus the dev tools (pytest, pytest-cov, pre-commi
 test:  ## Run the full test suite (mirrors CI)
 	$(PY) -m pytest tests/ -q
 
-coverage:  ## Run the full test suite with a faircode/ coverage report (informational only)
+test-fast:  ## Run the suite without the slow model-training benchmark tests (CI still runs everything)
+	$(PY) -m pytest tests/ -q -m "not slow"
+
+setup-browser:  ## Install Playwright and Chromium for the browser smoke test (tests/browser)
+	$(PY) -m pip install -e ".[browser]" && $(PY) -m playwright install chromium
+
+test-browser:  ## Open the real pages in Chromium and fail on any console error (run `make setup-browser` once first)
+	$(PY) -m pytest tests/browser -q
+
+coverage:  ## Run the full test suite with a faircode/ coverage report (what CI's profiler job runs; the figure is informational, not a gate)
 	$(PY) -m pytest tests/ -q --cov=faircode --cov-report=term-missing
+
+key-fold:  ## Regenerate the JS case-folding table (KEY_FOLD) from this machine's Python and node, e.g. after a Unicode upgrade
+	$(PY) scripts/generate_key_fold.py
+
+key-fold-check:  ## Verify KEY_FOLD against Python for every code point both runtimes assign (reports what it could not compare)
+	$(PY) scripts/generate_key_fold.py --check
 
 build-explainers:  ## Regenerate explainer pages, data.js, sitemap, and OG images (dark + light)
 	$(PY) scripts/build_explainers.py
@@ -30,9 +45,10 @@ favicons:  ## Regenerate favicon.ico/PNGs and apple-touch-icon.png from logo.svg
 fix-explainer-count:  ## Correct stale "N explainers" mentions in README/CONTRIBUTORS/METRICS/ROADMAP
 	$(PY) scripts/check_explainer_count.py --fix
 
-lint:  ## Enforce the em-dash-free rule + check for broken doc links + ruff (mirrors the lint workflow)
+lint:  ## Enforce the em-dash-free rule + check for broken doc links + issue numbers in docs (needs gh, skipped offline) + ruff (mirrors the lint workflow)
 	$(PY) scripts/check_em_dash.py
 	$(PY) scripts/check_broken_links.py
+	$(PY) scripts/check_issue_refs.py
 	ruff check faircode scripts tests
 
 audits:  ## Run every audit's unfair.py/fair.py + the CLI smoke tests (mirrors audits.yml's required run-audits job, plus profiler/benchmark-harness's CLI steps)
@@ -57,5 +73,5 @@ audits:  ## Run every audit's unfair.py/fair.py + the CLI smoke tests (mirrors a
 	echo "Benchmark harness smoke test passed: $$(wc -l < "$$tmp/results_fairness.csv") fairness rows written"; \
 	rm -rf "$$tmp"
 
-check: lint test audits  ## Run everything CI runs (lint + full test suite + audits/CLI smoke tests)
+check: lint key-fold-check test audits  ## Run everything CI runs (lint + full test suite + audits/CLI smoke tests)
 	@echo "All checks passed."

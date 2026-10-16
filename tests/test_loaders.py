@@ -259,3 +259,151 @@ def test_parquet_and_csv_profile_identically(tmp_path):
     result_parquet = profile(read_table(str(parquet_path)))
 
     assert result_csv == result_parquet
+
+
+# --- #843: non-UTF-8 input ---------------------------------------------------
+
+_LATIN = "sex,race\nM,Café\nF,Señor\nM,Café\nF,Señor\n"
+
+
+def test_read_table_encoding_argument_reads_latin1(tmp_path):
+    path = tmp_path / "latin.csv"
+    path.write_bytes(_LATIN.encode("latin-1"))
+    df = read_table(str(path), encoding="latin-1")
+    assert sorted(df["race"].unique()) == ["Café", "Señor"]
+
+
+def test_read_table_without_encoding_still_rejects_latin1(tmp_path):
+    path = tmp_path / "latin.csv"
+    path.write_bytes(_LATIN.encode("latin-1"))
+    with pytest.raises(UnicodeDecodeError):
+        read_table(str(path))
+
+
+@pytest.mark.parametrize("codec", ["utf-16", "utf-32", "utf-8-sig"])
+def test_read_table_sniffs_bom_encodings(tmp_path, codec):
+    path = tmp_path / "bom.csv"
+    path.write_bytes(_LATIN.encode(codec))
+    df = read_table(str(path))
+    assert list(df.columns) == ["sex", "race"]
+    assert sorted(df["race"].unique()) == ["Café", "Señor"]
+
+
+def test_cli_encoding_flag_and_decode_error_hint(tmp_path, capsys):
+    from faircode.cli import main
+    path = tmp_path / "latin.csv"
+    path.write_bytes(_LATIN.encode("latin-1"))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["profile", str(path)])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "--encoding" in err and "not valid utf-8" in err
+
+    assert main(["profile", str(path), "--encoding", "latin-1", "--json", "--no-provenance"]) == 0
+    assert "Café" in json.dumps(json.loads(capsys.readouterr().out), ensure_ascii=False)
+
+    with pytest.raises(SystemExit):
+        main(["profile", str(path), "--encoding", "nope-9"])
+    assert "unknown --encoding" in capsys.readouterr().err
+
+
+def test_read_table_json_honours_encoding_and_bom(tmp_path):
+    """#843 follow-up: .json used to be decoded as UTF-8 whatever --encoding said."""
+    rows = [{"sex": "M", "race": "Café"}, {"sex": "F", "race": "Señor"}]
+    text = json.dumps(rows, ensure_ascii=False)
+
+    latin = tmp_path / "latin.json"
+    latin.write_bytes(text.encode("latin-1"))
+    assert list(read_table(str(latin), encoding="latin-1")["race"]) == ["Café", "Señor"]
+    with pytest.raises(UnicodeDecodeError):
+        read_table(str(latin))
+
+    for codec in ("utf-16", "utf-8-sig"):
+        bom = tmp_path / f"{codec}.json"
+        bom.write_bytes(text.encode(codec))
+        assert list(read_table(str(bom))["race"]) == ["Café", "Señor"]
+
+    split = tmp_path / "split.json"
+    split.write_bytes(json.dumps({"columns": ["race"], "data": [["Café"], ["Señor"]]},
+                                 ensure_ascii=False).encode("latin-1"))
+    assert list(read_table(str(split), encoding="latin-1")["race"]) == ["Café", "Señor"]
+
+
+# #964: edge cases of the quote-aware delimiter sniffing (the JS engine mirrors it).
+from js_helpers import SNIFF_CASES  # shared with the Python/JS parity test
+
+
+@pytest.mark.parametrize("text,expected", SNIFF_CASES)
+def test_sniff_delimiter_edge_cases(text, expected):
+    assert _sniff_delimiter(text) == expected
+
+
+def test_sniff_delimiter_uses_the_given_default_when_nothing_qualifies():
+    assert _sniff_delimiter("a\n1\n", default="\t") == "\t"
+    assert _sniff_delimiter("", default=";") == ";"
+
+
+def test_logical_row_counts_skip_quoted_newlines_and_respect_max_rows():
+    from faircode.loaders import _logical_row_delimiter_counts as counts
+    assert counts('a;b\n"x;\ny";2\n', ";") == [1, 1]          # a quoted newline does not end the row
+    assert counts("a;b\n" * 9, ";", max_rows=3) == [1, 1, 1]
+    assert counts("", ";") == [] and counts("\n\n", ";") == []
+
+
+def test_reading_xlsx_without_openpyxl_names_the_extra(tmp_path, monkeypatch, capsys):
+    # #1004: pandas raises ImportError when openpyxl is missing; the user gets one plain line.
+    from faircode.cli import main
+
+    def no_openpyxl(*args, **kwargs):
+        raise ImportError("Missing optional dependency 'openpyxl'")
+
+    monkeypatch.setattr(pd, "read_excel", no_openpyxl)
+    path = tmp_path / "a.xlsx"
+    path.write_bytes(b"PK")
+    with pytest.raises(RuntimeError, match=r"requires the 'openpyxl' package \(install with: pip install faircode\[excel\]\)"):
+        read_table(str(path))
+    with pytest.raises(SystemExit) as exc:
+        main(["profile", str(path)])
+    assert exc.value.code == 2
+    assert "pip install faircode[excel]" in capsys.readouterr().err
+
+
+def test_get_xlsx_sheet_info_returns_none_for_a_workbook_without_sheets(tmp_path, monkeypatch):
+    # #1006: an opened workbook that lists no sheets stays silent; the real read reports the problem.
+    class NoSheets:
+        sheet_names = []
+
+    monkeypatch.setattr(pd, "ExcelFile", lambda path: NoSheets())
+    path = tmp_path / "a.xlsx"
+    path.write_bytes(b"PK")
+    assert get_xlsx_sheet_info(str(path)) is None
+
+
+def test_held_out_encoding_notes_skip_a_malformed_encoding_suffix():
+    # #1006: `h.xlsx=race@` has an empty codec name; the real parse reports it, the notice must not raise.
+    from faircode.loaders_extra import held_out_encoding_ignored_notes
+    assert held_out_encoding_ignored_notes(["h.xlsx=race@"], "latin-1") == []
+    assert held_out_encoding_ignored_notes(["h.xlsx=race@no-such-codec"]) == []
+
+
+def test_an_empty_file_says_so_in_plain_words(tmp_path, capsys, monkeypatch):
+    # #1010: not pandas' "No columns to parse from file"; the same words in the CLI, stdin and MCP.
+    import io
+    from faircode.cli import main
+    from faircode.loaders_extra import EMPTY_DATASET_MESSAGE
+    path = tmp_path / "zero.csv"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"dataset is empty \(no header row\)"):
+        read_table(str(path))
+    with pytest.raises(SystemExit) as exc:
+        main(["profile", str(path)])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert f"could not read dataset {path}: {EMPTY_DATASET_MESSAGE}" in err and "No columns" not in err
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    with pytest.raises(ValueError, match="dataset is empty"):
+        read_table("-")
+    header_only = tmp_path / "header.csv"
+    header_only.write_text("sex,race\n", encoding="utf-8")
+    assert list(read_table(str(header_only)).columns) == ["sex", "race"]    # a header row is not empty

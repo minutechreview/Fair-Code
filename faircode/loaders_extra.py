@@ -18,23 +18,39 @@ from pathlib import Path
 
 import pandas as pd
 
-from .loaders import SNIFF_SAMPLE_BYTES, _sniff_delimiter
+from .loaders import SNIFF_SAMPLE_BYTES, _sniff_delimiter, resolve_encoding, sniff_bom_encoding
 from .loaders import read_table as _read_table_frozen
 
 
-def read_table(path: str) -> pd.DataFrame:
+EMPTY_DATASET_MESSAGE = "dataset is empty (no header row)"   # mirrors parseCSV() in assets/profiler-engine.js (#1010)
+
+
+def read_table(path: str, encoding: str | None = None) -> pd.DataFrame:
+    """Read `path` ("-" for stdin) into a DataFrame; see _read_table_impl for the formats."""
+    try:
+        return _read_table_impl(path, encoding)
+    except pd.errors.EmptyDataError:   # pandas says "No columns to parse from file"
+        raise ValueError(EMPTY_DATASET_MESSAGE) from None
+
+
+def _read_table_impl(path: str, encoding: str | None = None) -> pd.DataFrame:
     if path == "-":
         # No file extension to dispatch on for a stdin stream, so always
         # sniff - the same fallback loaders.read_table() uses for an
         # unrecognized/missing extension on a real file.
-        content = sys.stdin.read()
+        if hasattr(sys.stdin, "buffer"):
+            raw = sys.stdin.buffer.read()
+            content = raw.decode(encoding or sniff_bom_encoding(raw[:4]) or "utf-8")
+        else:
+            content = sys.stdin.read()
         delimiter = _sniff_delimiter(content[:SNIFF_SAMPLE_BYTES])
         return pd.read_csv(io.StringIO(content), sep=delimiter)
 
     suffix = Path(path).suffix.lower()
 
     if suffix == ".json":
-        with open(path, "r", encoding="utf-8") as f:
+        encoding = resolve_encoding(path, encoding)
+        with open(path, "r", encoding=encoding) as f:
             raw = f.read()
 
         try:
@@ -52,7 +68,7 @@ def read_table(path: str) -> pd.DataFrame:
         # below because columns-oriented JSON is also represented as a
         # dictionary of dictionaries.
         if isinstance(parsed, dict) and {"columns", "data"} <= parsed.keys():
-            return pd.read_json(path, orient="split")
+            return pd.read_json(path, orient="split", encoding=encoding)
 
         # Detect table-orient JSON: {"schema": {...}, "data": [...]} - a
         # real, valid pandas export (the only orientation that round-trips
@@ -61,7 +77,7 @@ def read_table(path: str) -> pd.DataFrame:
         # non-Series may lead to ambiguous ordering" error instead of a clear
         # one.
         if isinstance(parsed, dict) and {"schema", "data"} <= parsed.keys():
-            return pd.read_json(path, orient="table")
+            return pd.read_json(path, orient="table", encoding=encoding)
 
         # Detect index/columns-oriented JSON: a dict whose every top-level
         # value is itself a dict of scalars.
@@ -96,7 +112,16 @@ def read_table(path: str) -> pd.DataFrame:
                     "orient=\"split\" (df.to_json(path, orient=\"split\")), "
                     "which this loader always parses correctly."
                 )
-        return pd.read_json(path)
+        # Detect records-orient JSON: a list of dicts. Flatten nested
+        # objects with pandas.json_normalize so sub-objects become dotted
+        # column names (e.g. loc.state) instead of dict cells that fail with
+        # TypeError: unhashable type: 'dict' during column detection (#844).
+        if isinstance(parsed, list) and (
+            not parsed or all(isinstance(row, dict) for row in parsed)
+        ):
+            return pd.json_normalize(parsed)
+
+        return pd.read_json(path, encoding=encoding)
 
     if suffix == ".parquet":
         try:
@@ -107,7 +132,7 @@ def read_table(path: str) -> pd.DataFrame:
                 "(install with: pip install faircode[parquet])"
             ) from exc
 
-    return _read_table_frozen(path)
+    return _read_table_frozen(path, encoding=encoding)
 
 
 def get_xlsx_sheet_info(path: str) -> tuple[str, list[str]] | None:
@@ -129,3 +154,39 @@ def get_xlsx_sheet_info(path: str) -> tuple[str, list[str]] | None:
     if not book.sheet_names:
         return None
     return book.sheet_names[0], book.sheet_names[1:]
+
+
+# Binary table formats that never decode as text, so an explicit text encoding
+# cannot apply (#870). Keep the suffixes lower-case to match Path.suffix.lower().
+_ENCODING_IGNORED_SUFFIXES = (".xlsx", ".parquet")
+
+ENCODING_IGNORED_CLI = "--encoding has no effect on .xlsx/.parquet files"
+ENCODING_IGNORED_NOTE = "encoding has no effect on .xlsx/.parquet files"
+
+
+def encoding_ignored_for_path(path: str) -> bool:
+    """True when `path`'s suffix is a format that ignores a text encoding."""
+    return Path(path).suffix.lower() in _ENCODING_IGNORED_SUFFIXES
+
+
+def held_out_encoding_ignored_notes(specs, encoding=None) -> list:
+    """One note per held-out spec whose file is a binary workbook/Parquet that an explicit
+    encoding (the spec's `@ENCODING` or the shared `encoding`) cannot apply to (#923)."""
+    from .proxy import partition_held_out_path, split_held_out_encoding
+    notes = []
+    for spec in specs or []:
+        try:
+            bare, spec_encoding = split_held_out_encoding(spec)
+        except ValueError:
+            continue   # the real parse reports a malformed suffix
+        path = partition_held_out_path(bare)[0]
+        if (spec_encoding or encoding) and path and encoding_ignored_for_path(path):
+            notes.append(f"{ENCODING_IGNORED_NOTE} (held-out file {path})")
+    return notes
+
+
+def encoding_ignored_note(path: str, encoding: str | None) -> str | None:
+    """Return the MCP/agent note when `encoding` is set for a binary path."""
+    if encoding is None or not encoding_ignored_for_path(path):
+        return None
+    return ENCODING_IGNORED_NOTE

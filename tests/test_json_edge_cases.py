@@ -215,3 +215,35 @@ def test_table_oriented_json_round_trips_correctly(tmp_path):
     original.to_json(table_path, orient="table")
     loaded = read_table(str(table_path))
     pd.testing.assert_frame_equal(loaded, original)
+
+
+# ── Nested-records JSON ────────────────────────────────────────────────────────
+def test_records_json_with_nested_objects_flattens(tmp_path):
+    # Issue #844: a records-style JSON whose values are nested objects used
+    # to yield dict cells that crashed during column detection with
+    # TypeError: unhashable type: 'dict'. pandas.json_normalize flattens them
+    # into dotted columns.
+    path = tmp_path / "nested.json"
+    path.write_text(
+        '[{"sex":"M","loc":{"state":"TX"}},{"sex":"F","loc":{"state":"CA"}}]',
+        encoding="utf-8",
+    )
+    loaded = read_table(str(path))
+    assert list(loaded.columns) == ["sex", "loc.state"]
+    assert loaded["loc.state"].tolist() == ["TX", "CA"]
+
+
+
+def test_dict_and_list_columns_are_skipped_by_detection_and_profile():
+    # #973: unhashable cells make series.nunique() raise TypeError; the column is skipped
+    # quietly instead of turning a nested-JSON frame into a crash.
+    import pandas as pd
+    from faircode import profile
+    from faircode.detect import detect_columns
+    df = pd.DataFrame({"sex": ["m", "f"] * 5,
+                       "meta": [{"a": 1}, {"a": 2}] * 5,
+                       "tags": [["x"], ["y"]] * 5})
+    assert [d["name"] for d in detect_columns(df)] == ["sex"]
+    result = profile(df)
+    assert [d["name"] for d in result["dimensions"]] == ["sex"]
+    assert "meta" not in str(result["dimensions"]) and "tags" not in str(result["dimensions"])

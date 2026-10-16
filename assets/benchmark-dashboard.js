@@ -36,18 +36,25 @@
     summary: null,
     tab: 'fairness',
     filters: { fairness: {}, performance: {}, summary: {} },
-    significantOnly: false,
+    // Per tab, like filters and sort (#864): 'significant' means a single result on
+    // fairness but every model on the summary tab, so the choice must not carry over.
+    significantOnly: { fairness: false, summary: false },
     sort: { fairness: null, performance: null, summary: null }, // { field, dir }
     bundled: { fairness: false, performance: false, summary: false } // loaded from results/ (figures exist)
   };
 
+  // The five Export colours choices; the deep link only accepts these (#893).
+  var CHART_THEMES = ['page', 'light', 'dark', 'transparent', 'colorblind'];
   var pending = { filters: {}, sort: {} }; // from the URL, applied when that tab's data loads
   var exportBtn = document.getElementById('benchExportBtn');
   var clearBtn = document.getElementById('benchClearBtn');
   var legendEl = document.getElementById('benchLegend');
+  var keyEl = document.getElementById('benchKey');
+  var keySigText = document.getElementById('benchKeySigText');
   var chartButtons = document.getElementById('benchChartButtons');
   var chartSvgBtn = document.getElementById('benchChartSvgBtn');
   var chartPngBtn = document.getElementById('benchChartPngBtn');
+  var chartThemeSelect = document.getElementById('benchChartThemeSelect');
   var figureBlock = document.getElementById('benchFigureBlock');
   var figureImg = document.getElementById('benchFigureImg');
   var tabButtons = Array.prototype.slice.call(document.querySelectorAll('.bench-tab'));
@@ -59,6 +66,7 @@
   var resultsEl = document.getElementById('benchResults');
   var filterBar = document.getElementById('benchFilters');
   var significantOnlyInput = document.getElementById('significantOnlyInput');
+  var significantOnlyText = document.getElementById('significantOnlyText');
   var resetFiltersBtn = document.getElementById('benchResetBtn');
   var summaryEl = document.getElementById('benchSummary');
   var tableHost = document.getElementById('benchTable');
@@ -152,30 +160,41 @@
   function loadBundled() {
     showError('');
     statusEl.textContent = 'Loading results/results_fairness.csv, results_performance.csv and summary.csv…';
-    Promise.all([
-      fetch('results/results_fairness.csv').then(function (r) {
+    var targets = [
+      { kind: 'fairness', path: 'results/results_fairness.csv' },
+      { kind: 'performance', path: 'results/results_performance.csv' },
+      { kind: 'summary', path: 'results/summary.csv' }
+    ];
+    Promise.allSettled(targets.map(function (t) {
+      return fetch(t.path).then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.text();
-      }),
-      fetch('results/results_performance.csv').then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.text();
-      }),
-      fetch('results/summary.csv').then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.text();
-      })
-    ]).then(function (texts) {
+      });
+    })).then(function (settled) {
       statusEl.textContent = '';
-      loadText('fairness', texts[0], 'results/results_fairness.csv', true);
-      loadText('performance', texts[1], 'results/results_performance.csv', true);
-      loadText('summary', texts[2], 'results/summary.csv', true);
-      render();
-    }).catch(function (err) {
-      statusEl.textContent = '';
-      showError('Could not fetch the bundled results/ CSVs (' + err.message + '). ' +
-        'This works once the site is served over HTTP - locally over file:// the browser ' +
-        'blocks it. Drop results_fairness.csv / results_performance.csv / summary.csv below instead.');
+      var succeeded = 0;
+      var failed = [];
+      settled.forEach(function (res, i) {
+        var t = targets[i];
+        if (res.status === 'fulfilled') {
+          loadText(t.kind, res.value, t.path, true);
+          succeeded++;
+        } else {
+          failed.push(t.path + ' (' + ((res.reason && res.reason.message) || 'failed') + ')');
+        }
+      });
+      if (succeeded > 0) {
+        if (failed.length) {
+          statusEl.textContent = (statusEl.textContent ? statusEl.textContent + ' · ' : '') +
+            'Could not load: ' + failed.join(', ');
+        }
+        render();
+      } else {
+        showError('Could not fetch the bundled results/ CSVs (' +
+          (failed.join(', ') || 'failed') + '). ' +
+          'This works once the site is served over HTTP - locally over file:// the browser ' +
+          'blocks it. Drop results_fairness.csv / results_performance.csv / summary.csv below instead.');
+      }
     });
   }
 
@@ -247,14 +266,14 @@
   });
 
   significantOnlyInput.addEventListener('change', function () {
-    state.significantOnly = significantOnlyInput.checked;
+    if (hasSignificance(state.tab)) state.significantOnly[state.tab] = significantOnlyInput.checked;
     render();
   });
 
   resetFiltersBtn.addEventListener('click', function () {
     var kind = state.tab;
     state.filters[kind] = {};
-    state.significantOnly = false;
+    if (hasSignificance(kind)) state.significantOnly[kind] = false;
     significantOnlyInput.checked = false;
     state.sort[kind] = null;
     render();
@@ -271,12 +290,16 @@
     return out;
   }
 
+  // The significance toggle applies to the fairness tab (per result row) and the
+  // roll-up summary tab (a row counts when every model was significant, #819).
+  function hasSignificance(kind) { return kind === 'fairness' || kind === 'summary'; }
+
   function filteredRows(kind) {
     var data = state[kind];
     if (!data) return [];
     var filters = state.filters[kind];
     return data.rows.filter(function (r) {
-      if (kind === 'fairness' && state.significantOnly && !r.significant) return false;
+      if (hasSignificance(kind) && state.significantOnly[kind] && !r.significant) return false;
       return FILTER_FIELDS[kind].every(function (f) {
         return !filters[f] || r[f] === filters[f];
       });
@@ -330,7 +353,7 @@
     });
     resetFiltersBtn.disabled = !FILTER_FIELDS[kind].some(function (field) {
       return Boolean(state.filters[kind][field]);
-    }) && !(kind === 'fairness' && state.significantOnly) && !state.sort[kind];
+    }) && !(hasSignificance(kind) && state.significantOnly[kind]) && !state.sort[kind];
   }
 
   // ── Rendering: table ──────────────────────────────────────────────────
@@ -441,6 +464,10 @@
     var sorted = rows.slice().sort(function (a, b) { return Math.abs(b.value || 0) - Math.abs(a.value || 0); });
     return {
       signed: signed,
+      // Only fairness/summary bars carry a significance flag; performance bars are all neutral.
+      keyed: kind !== 'performance',
+      // On the Summary tab a bar is only flagged when significant in every model (#905).
+      keyLabel: kind === 'summary' ? 'hatched = significant in every model' : 'hatched = significant gap (p < 0.05)',
       bars: sorted.map(function (r) {
         var mag = r.value === null ? 0 : Math.abs(r.value) / maxAbs * (signed ? 50 : 100);
         var neg = r.value !== null && r.value < 0;
@@ -465,12 +492,15 @@
           'audit x strategy' + (kind === 'fairness' ? ' x model' : '') + ' combination on the same scale.';
       chartHost.hidden = true;
       chartButtons.hidden = true;
+      keyEl.hidden = true;
       return;
     }
     chartNote.textContent = '';
     chartHost.hidden = false;
-    if (!rows.length) { chartHost.innerHTML = ''; chartButtons.hidden = true; return; }
+    if (!rows.length) { chartHost.innerHTML = ''; chartButtons.hidden = true; keyEl.hidden = true; return; }
     chartButtons.hidden = false;
+    keyEl.hidden = kind === 'performance';
+    if (keySigText) keySigText.textContent = chartModel(kind, rows).keyLabel;
 
     var model = chartModel(kind, rows);
     chartHost.innerHTML = model.bars.map(function (bar) {
@@ -491,27 +521,81 @@
     });
   }
 
-  function chartToSvg(model, title) {
-    var LABEL_W = 380, TRACK_W = 400, ROW_H = 24, TOP = 34, W = LABEL_W + TRACK_W + 130;
+  // Colours for the exported chart (#813): the site's light and dark tokens
+  // (benchmark.html :root / html[data-theme="dark"]), keyed by role.
+  var CHART_PALETTES = {
+    light: { bg: '#f4f1e8', text: '#36321f', muted: '#7d7459', track: '#e2dcc9',
+             axis: '#bdb59c', bad: '#a63a22', good: '#2f6b4f' },
+    dark: { bg: '#15130d', text: '#cfc7b0', muted: '#8d8367', track: '#242013',
+            axis: '#443e2d', bad: '#cf6f49', good: '#79b294' },
+    // Okabe-Ito vermillion / blue: distinguishable under red-green colour blindness (#865).
+    colorblind: { bg: '#f4f1e8', text: '#36321f', muted: '#7d7459', track: '#e2dcc9',
+                  axis: '#bdb59c', bad: '#d55e00', good: '#0072b2' }
+  };
+
+  // The palette the on-screen chart is using right now, read from the page's
+  // resolved CSS variables; falls back to the light tokens where a variable (or
+  // getComputedStyle itself) is unavailable.
+  function pagePalette() {
+    var palette = Object.assign({}, CHART_PALETTES.light);
+    try {
+      var cs = getComputedStyle(document.documentElement);
+      var vars = { bg: '--bg', text: '--text', muted: '--muted', track: '--bias-track-bg',
+                   axis: '--border2', bad: '--accent', good: '--accent3' };
+      Object.keys(vars).forEach(function (role) {
+        var v = cs.getPropertyValue(vars[role]).trim();
+        if (v) palette[role] = v;
+      });
+    } catch (e) { /* no DOM styles (tests, sandboxed frames) */ }
+    return palette;
+  }
+
+  // theme: 'page' (default - match what is on screen), 'light', 'dark', or
+  // 'transparent' (light ink, no background rect, for dropping onto a slide).
+  function chartPalette(theme) {
+    if (theme === 'light' || theme === 'dark' || theme === 'colorblind') return CHART_PALETTES[theme];
+    if (theme === 'transparent') return Object.assign({}, CHART_PALETTES.light, { bg: null });
+    return pagePalette();
+  }
+
+  function chartToSvg(model, title, theme) {
+    var LABEL_W = 380, TRACK_W = 400, ROW_H = 24, W = LABEL_W + TRACK_W + 130;
+    var TOP = model.keyed ? 52 : 34;   // room for the key row under the title
     var H = TOP + model.bars.length * ROW_H + 12;
+    var c = chartPalette(theme);
     var out = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H +
       '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-labelledby="t"><title id="t">' + svgEsc(title) + '</title>' +
-      '<rect width="100%" height="100%" fill="#f4f1e8"/>' +
-      '<text x="12" y="22" font-family="monospace" font-size="13" fill="#36321f">' + svgEsc(title) + '</text>';
+      // Significant ("bad") bars are hatched as well as coloured, so they stay distinct
+      // without relying on hue alone (WCAG 1.4.1, #865).
+      '<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+        '<line x1="0" y1="0" x2="0" y2="6" stroke="#fff" stroke-opacity="0.55" stroke-width="2"/></pattern></defs>' +
+      (c.bg ? '<rect width="100%" height="100%" fill="' + svgEsc(c.bg) + '"/>' : '') +
+      '<text x="12" y="22" font-family="monospace" font-size="13" fill="' + svgEsc(c.text) + '">' + svgEsc(title) + '</text>';
+    if (model.keyed) {
+      // Two-item key, drawn with the same fills as the bars so the export explains itself (#894).
+      out += '<rect x="12" y="32" width="26" height="10" rx="3" fill="' + svgEsc(c.bad) + '"/>' +
+        '<rect x="12" y="32" width="26" height="10" rx="3" fill="url(#hatch)"/>' +
+        '<text x="44" y="41" font-family="monospace" font-size="11" fill="' + svgEsc(c.muted) + '">' + svgEsc(model.keyLabel) + '</text>' +
+        '<rect x="332" y="32" width="26" height="10" rx="3" fill="' + svgEsc(c.good) + '"/>' +
+        '<text x="364" y="41" font-family="monospace" font-size="11" fill="' + svgEsc(c.muted) + '">plain = not significant</text>';
+    }
     if (model.signed) {
       out += '<line x1="' + (LABEL_W + TRACK_W / 2) + '" y1="' + (TOP - 4) + '" x2="' + (LABEL_W + TRACK_W / 2) +
-        '" y2="' + (H - 8) + '" stroke="#bdb59c"/>';
+        '" y2="' + (H - 8) + '" stroke="' + svgEsc(c.axis) + '"/>';
     }
     model.bars.forEach(function (bar, i) {
       var y = TOP + i * ROW_H;
       var label = bar.label.length > 54 ? bar.label.slice(0, 53) + '…' : bar.label;
       var x = LABEL_W + TRACK_W * bar.offset / 100, w = TRACK_W * bar.width / 100;
-      out += '<text x="12" y="' + (y + 14) + '" font-family="monospace" font-size="11" fill="#36321f">' +
+      out += '<text x="12" y="' + (y + 14) + '" font-family="monospace" font-size="11" fill="' + svgEsc(c.text) + '">' +
         svgEsc(label) + '</text>' +
-        '<rect x="' + LABEL_W + '" y="' + (y + 3) + '" width="' + TRACK_W + '" height="14" rx="3" fill="#e2dcc9"/>' +
+        '<rect x="' + LABEL_W + '" y="' + (y + 3) + '" width="' + TRACK_W + '" height="14" rx="3" fill="' + svgEsc(c.track) + '"/>' +
         '<rect x="' + x.toFixed(1) + '" y="' + (y + 3) + '" width="' + w.toFixed(1) + '" height="14" rx="3" fill="' +
-        (bar.cls === 'bad' ? '#a63a22' : '#2f6b4f') + '"' + (bar.neg ? ' opacity="0.75"' : '') + '/>' +
-        '<text x="' + (LABEL_W + TRACK_W + 10) + '" y="' + (y + 14) + '" font-family="monospace" font-size="11" fill="#7d7459">' +
+        svgEsc(bar.cls === 'bad' ? c.bad : c.good) + '"' + (bar.neg ? ' opacity="0.75"' : '') + '/>' +
+        (bar.cls === 'bad'
+          ? '<rect x="' + x.toFixed(1) + '" y="' + (y + 3) + '" width="' + w.toFixed(1) + '" height="14" rx="3" fill="url(#hatch)"/>'
+          : '') +
+        '<text x="' + (LABEL_W + TRACK_W + 10) + '" y="' + (y + 14) + '" font-family="monospace" font-size="11" fill="' + svgEsc(c.muted) + '">' +
         (bar.value === null ? 'n/a' : bar.value.toFixed(4)) + '</text>';
     });
     return out + '</svg>';
@@ -539,7 +623,8 @@
     var kind = state.tab;
     if (!state[kind] || !chartReady(kind)) return null;
     var rows = sortedRows(kind, filteredRows(kind));
-    return rows.length ? chartToSvg(chartModel(kind, rows), chartTitle(kind)) : null;
+    var theme = chartThemeSelect && chartThemeSelect.value ? chartThemeSelect.value : 'page';
+    return rows.length ? chartToSvg(chartModel(kind, rows), chartTitle(kind), theme) : null;
   }
 
   chartSvgBtn.addEventListener('click', function () {
@@ -610,7 +695,7 @@
   exportBtn.addEventListener('click', downloadFiltered);
 
   // ── URL deep-linking (issue #764) ──────────────────────────────────────
-  // Only the active tab's view is encoded: ?tab=fairness&audit=compas&sig=1&sort=value:asc
+  // Only the active tab's view is encoded: ?tab=fairness&audit=compas&sig=1&sort=value:asc&chart=dark
   function writeUrlState() {
     try {
       var kind = state.tab, params = new URLSearchParams();
@@ -618,8 +703,11 @@
       FILTER_FIELDS[kind].forEach(function (f) {
         if (state.filters[kind][f]) params.set(f, state.filters[kind][f]);
       });
-      if (kind === 'fairness' && state.significantOnly) params.set('sig', '1');
+      if (hasSignificance(kind) && state.significantOnly[kind]) params.set('sig', '1');
       if (state.sort[kind]) params.set('sort', state.sort[kind].field + ':' + state.sort[kind].dir);
+      if (chartThemeSelect && chartThemeSelect.value && chartThemeSelect.value !== 'page') {
+        params.set('chart', chartThemeSelect.value);
+      }
       history.replaceState(null, '', '?' + params.toString());
     } catch (e) { /* file:// or sandboxed frames: deep-linking is best-effort */ }
   }
@@ -637,10 +725,12 @@
     if (sort.length === 2 && (sort[1] === 'asc' || sort[1] === 'desc')) {
       pending.sort[tab] = { field: sort[0], dir: sort[1] };
     }
-    if (tab === 'fairness' && params.get('sig') === '1') {
-      state.significantOnly = true;
+    if (hasSignificance(tab) && params.get('sig') === '1') {
+      state.significantOnly[tab] = true;
       significantOnlyInput.checked = true;
     }
+    var chart = params.get('chart');
+    if (chartThemeSelect && CHART_THEMES.indexOf(chart) !== -1) chartThemeSelect.value = chart;
     tabButtons.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === tab)); });
     return true;
   }
@@ -658,19 +748,27 @@
       tableHost.innerHTML = '<p class="section-note">Load ' + kind + ' results above to explore them.</p>';
       chartHost.innerHTML = ''; chartHost.hidden = true; chartNote.textContent = '';
       chartButtons.hidden = true;
+      keyEl.hidden = true;
       figureBlock.hidden = true;
       exportBtn.hidden = true;
       clearBtn.hidden = true;
       legendEl.hidden = true;
       return;
     }
-    significantOnlyInput.parentElement.hidden = kind !== 'fairness';
+    significantOnlyInput.parentElement.hidden = !hasSignificance(kind);
+    significantOnlyInput.checked = hasSignificance(kind) && state.significantOnly[kind];
+    if (significantOnlyText) {
+      significantOnlyText.textContent = kind === 'summary'
+        ? ' Significant in every model only (p < 0.05)'
+        : ' Significant results only (p < 0.05)';
+    }
     resetFiltersBtn.hidden = false;
     renderFilters(kind);
     var rows = sortedRows(kind, filteredRows(kind));
-    var sigCount = kind === 'fairness' ? rows.filter(function (r) { return r.significant; }).length : null;
+    var sigCount = hasSignificance(kind) ? rows.filter(function (r) { return r.significant; }).length : null;
     summaryEl.textContent = rows.length.toLocaleString() + ' of ' + data.rows.length.toLocaleString() + ' rows shown' +
-      (sigCount !== null ? ' · ' + sigCount.toLocaleString() + ' significant' : '');
+      (sigCount !== null ? ' · ' + sigCount.toLocaleString() + ' significant' +
+        (kind === 'summary' ? ' in every model' : '') : '');
     renderTable(kind, rows);
     renderChart(kind, rows);
     renderFigure(kind);
@@ -679,6 +777,8 @@
     legendEl.hidden = !(kind === 'fairness' && rows.some(function (r) { return r.small_sample_warning; }));
     writeUrlState();
   }
+
+  if (chartThemeSelect) chartThemeSelect.addEventListener('change', writeUrlState);
 
   var restored = readUrlState();
   render();

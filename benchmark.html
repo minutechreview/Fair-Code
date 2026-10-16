@@ -192,7 +192,7 @@
       <div class="bench-filters" id="benchFilters"></div>
       <div class="bench-filter-actions">
         <label class="bench-sig-toggle">
-          <input type="checkbox" id="significantOnlyInput"> Significant results only (p &lt; 0.05)
+          <input type="checkbox" id="significantOnlyInput"><span id="significantOnlyText"> Significant results only (p &lt; 0.05)</span>
         </label>
         <button type="button" class="action-btn" id="benchResetBtn">Reset filters</button>
       </div>
@@ -205,10 +205,23 @@
       <div class="bench-chart-block" id="benchChartBlock">
         <h3 class="section-title">Chart</h3>
         <p class="section-note" id="benchChartNote"></p>
+        <p class="bench-key" id="benchKey" hidden>
+          <span class="bench-key-item"><span class="bar-fill bad bench-key-swatch" aria-hidden="true"></span> <span id="benchKeySigText">hatched = significant gap</span></span>
+          <span class="bench-key-item"><span class="bar-fill good bench-key-swatch" aria-hidden="true"></span> plain = not significant</span>
+        </p>
         <div id="benchChart" hidden></div>
         <div class="bench-chart-buttons" id="benchChartButtons" hidden>
           <button type="button" class="action-btn" id="benchChartSvgBtn">⬇ Download chart (SVG)</button>
           <button type="button" class="action-btn" id="benchChartPngBtn">⬇ Download chart (PNG)</button>
+          <label class="bench-chart-theme">Export colours
+            <select id="benchChartThemeSelect">
+              <option value="page" selected>Match page</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="transparent">Transparent</option>
+              <option value="colorblind">Colour-blind safe</option>
+            </select>
+          </label>
         </div>
       </div>
 

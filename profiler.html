@@ -180,6 +180,15 @@
       </div>
     </section>
     <button class="sample-btn" id="sampleBtn" type="button">Try it with a sample dataset</button>
+    <label class="encoding-picker">Text encoding (<code>--encoding</code>)
+      <select class="threshold-input" id="encodingSelect">
+              <option value="auto" selected>Auto (BOM, else UTF-8)</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="utf-16">UTF-16</option>
+              <option value="cp1252">Windows-1252 (cp1252)</option>
+              <option value="latin-1">ISO-8859-1 (latin-1)</option>
+      </select>
+    </label>
 
     <p class="profiler-status" id="fileStatus" aria-live="polite" hidden></p>
     <p class="profiler-error" id="error" role="alert" hidden></p>
@@ -202,6 +211,7 @@
       <div class="results-actions">
         <button class="action-btn" id="downloadHtmlBtn" type="button">⬇ Download report (HTML)</button>
         <button class="action-btn" id="copyJsonBtn" type="button">⧉ Copy as JSON</button>
+        <button class="action-btn" id="copyCliBtn" type="button" title="The faircode command that reproduces this run with the same options">⧉ Copy as CLI command</button>
         <button class="action-btn" id="downloadCsvBtn" type="button">⬇ Download CSV</button>
         <label class="csv-provenance"><input type="checkbox" id="csvProvenanceInput"> include provenance</label>
         <button class="action-btn" id="referenceBtn" type="button">⚖ Score vs reference…</button>
@@ -263,6 +273,21 @@
             <input type="number" class="threshold-input" id="maxDimensionGroupsInput" data-opt="max_dimension_groups"
                    step="1" min="1" placeholder="50" inputmode="numeric">
           </label>
+          <label>Max plausible age (<code>--max-age</code>)
+            <input type="number" class="threshold-input" id="maxAgeInput" data-opt="max_age"
+                   step="1" min="1" placeholder="120" inputmode="numeric">
+          </label>
+          <label>Birth-year reference (<code>--age-reference-year</code>)
+            <input type="number" class="threshold-input" id="ageReferenceYearInput" data-opt="age_reference_year"
+                   step="1" min="1900" placeholder="e.g. 2026" inputmode="numeric">
+          </label>
+          <label class="keywords-label">Extra column-name keywords (<code>--keywords</code>, JSON)
+            <textarea class="threshold-input keywords-input" id="keywordsInput" data-opt-json="keywords" rows="2" aria-describedby="keywordsError"
+                      spellcheck="false" placeholder='{"sex": ["sesso"], "age": ["eta"]}'></textarea>
+            <span class="keywords-error" id="keywordsError" role="alert" hidden></span>
+          </label>
+          <p class="keywords-restored" id="keywordsRestored" hidden>Restored from your last session.
+            <button type="button" class="action-btn" id="keywordsForget">Forget</button></p>
         </div>
       </details>
 
@@ -301,12 +326,24 @@
             <option value="holm">Holm</option>
           </select>
         </label>
+        <label class="proxy-exact-toggle">
+          <input type="checkbox" id="proxyExactInput"> Exact test for small cells (<code>--proxy-exact</code>)
+        </label>
+        <label class="proxy-exact-tuning">Shuffles (<code>--proxy-exact-permutations</code>)
+          <input type="number" class="threshold-input" id="proxyExactPermutationsInput" min="1" max="1000000" step="1"
+                 placeholder="1000" inputmode="numeric" disabled aria-describedby="proxyExactError">
+        </label>
+        <label class="proxy-exact-tuning">Row cap (<code>--proxy-exact-max-rows</code>)
+          <input type="number" class="threshold-input" id="proxyExactMaxRowsInput" min="1" step="1"
+                 placeholder="20000" inputmode="numeric" disabled aria-describedby="proxyExactError">
+        </label>
+        <span class="keywords-error" id="proxyExactError" role="alert" hidden></span>
         <details class="proxy-heldout">
           <summary>Test columns you already dropped (<code>--proxy-hints-with</code>)</summary>
           <p class="section-note">
             Upload the original file that still has the dropped protected attribute (CSV, TSV, JSON or
-            Excel, same rows in the same order as this dataset), and name the column. Add a row per
-            dropped column. Each is tested against every detected dimension, so "we removed the
+            Excel, same rows in the same order as this dataset, or with a join key column present in
+            both files), and name the column. Add a row per dropped column. Each is tested against every detected dimension, so "we removed the
             column" cannot hide a proxy.
           </p>
           <div id="heldOutRows"></div>
@@ -344,6 +381,15 @@
       </div>
       <div class="compare-actions">
         <button class="sample-btn" id="compareSampleBtn" type="button">Try with sample drift data</button>
+        <label class="encoding-picker">Text encoding (<code>--encoding</code>)
+          <select class="threshold-input" id="compareEncodingSelect">
+              <option value="auto" selected>Auto (BOM, else UTF-8)</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="utf-16">UTF-16</option>
+              <option value="cp1252">Windows-1252 (cp1252)</option>
+              <option value="latin-1">ISO-8859-1 (latin-1)</option>
+          </select>
+        </label>
       </div>
 
       <details class="mapping-block" id="compareMappingBlock" hidden>
@@ -393,6 +439,21 @@
             <input type="number" class="threshold-input" id="compareMaxDimensionGroupsInput" data-opt="max_dimension_groups"
                    step="1" min="1" placeholder="50" inputmode="numeric">
           </label>
+          <label>Max plausible age (<code>--max-age</code>)
+            <input type="number" class="threshold-input" id="compareMaxAgeInput" data-opt="max_age"
+                   step="1" min="1" placeholder="120" inputmode="numeric">
+          </label>
+          <label>Birth-year reference (<code>--age-reference-year</code>)
+            <input type="number" class="threshold-input" id="compareAgeReferenceYearInput" data-opt="age_reference_year"
+                   step="1" min="1900" placeholder="e.g. 2026" inputmode="numeric">
+          </label>
+          <label class="keywords-label">Extra column-name keywords (<code>--keywords</code>, JSON)
+            <textarea class="threshold-input keywords-input" id="compareKeywordsInput" data-opt-json="keywords" rows="2" aria-describedby="compareKeywordsError"
+                      spellcheck="false" placeholder='{"sex": ["sesso"], "age": ["eta"]}'></textarea>
+            <span class="keywords-error" id="compareKeywordsError" role="alert" hidden></span>
+          </label>
+          <p class="keywords-restored" id="compareKeywordsRestored" hidden>Restored from your last session.
+            <button type="button" class="action-btn" id="compareKeywordsForget">Forget</button></p>
         </div>
       </details>
 
@@ -401,6 +462,7 @@
       <div class="results-actions" id="compareReportActions" hidden>
         <button class="action-btn" id="compareDownloadHtmlBtn" type="button">⬇ Download report (HTML)</button>
         <button class="action-btn" id="compareCopyJsonBtn" type="button">⧉ Copy as JSON</button>
+        <button class="action-btn" id="compareCopyCliBtn" type="button" title="The faircode command that reproduces this comparison with the same options">⧉ Copy as CLI command</button>
         <button class="action-btn" id="compareDownloadCsvBtn" type="button">⬇ Download CSV</button>
         <label class="csv-provenance"><input type="checkbox" id="compareCsvProvenanceInput"> include provenance</label>
       </div>
@@ -421,11 +483,23 @@
             <option value="holm">Holm</option>
           </select>
         </label>
+        <label class="proxy-exact-toggle">
+          <input type="checkbox" id="compareProxyExactInput"> Exact test for small cells (<code>--proxy-exact</code>)
+        </label>
+        <label class="proxy-exact-tuning">Shuffles (<code>--proxy-exact-permutations</code>)
+          <input type="number" class="threshold-input" id="compareProxyExactPermutationsInput" min="1" max="1000000" step="1"
+                 placeholder="1000" inputmode="numeric" disabled aria-describedby="compareProxyExactError">
+        </label>
+        <label class="proxy-exact-tuning">Row cap (<code>--proxy-exact-max-rows</code>)
+          <input type="number" class="threshold-input" id="compareProxyExactMaxRowsInput" min="1" step="1"
+                 placeholder="20000" inputmode="numeric" disabled aria-describedby="compareProxyExactError">
+        </label>
+        <span class="keywords-error" id="compareProxyExactError" role="alert" hidden></span>
         <details class="proxy-heldout">
           <summary>Test columns you already dropped (<code>--proxy-hints-with-a/-b</code>)</summary>
           <p class="section-note">
             Per dataset: a file that still has the dropped attribute (rows aligned 1:1 with that
-            dataset) and the column name. Add a row per dropped column.
+            dataset, or joined on a key column) and the column name. Add a row per dropped column.
           </p>
           <h4 class="proxy-hint-side">Dataset A</h4>
           <div id="compareHeldOutRowsA"></div>
@@ -449,6 +523,7 @@
   </main>
 
   <script src="assets/profiler-engine.js"></script>
+  <script src="assets/profiler-shared.js"></script>
   <script src="assets/profiler-heldout.js"></script>
   <script src="assets/profiler-ui.js"></script>
   <script src="assets/profiler-compare.js"></script>

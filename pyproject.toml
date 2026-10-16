@@ -24,6 +24,7 @@ proxy = ["scipy>=1.10"]
 benchmark = ["scikit-learn>=1.8.0", "pyyaml>=6.0", "fairlearn>=0.14.0", "matplotlib>=3.10"]
 mcp = ["mcp>=2.0"]
 test = ["pytest>=8.0", "pytest-cov>=5.0"]
+browser = ["playwright>=1.40"]   # tests/browser; also run `python -m playwright install chromium`
 
 [project.urls]
 Homepage = "https://github.com/yakew7/Fair-Code"
@@ -41,6 +42,15 @@ faircode = [
     "SPEC.md", "MANIFEST_SPEC.md",
     "_explainers/*.md", "_explainers/data.json",
     "_results_frozen/*.csv",
+]
+
+[tool.pytest.ini_options]
+# The repo root (for `import scripts.*`) and tests/ (for the shared js_helpers module) work in every
+# import mode, including --import-mode=importlib (#945).
+pythonpath = [".", "tests"]
+markers = [
+    "slow: trains models (tests/test_benchmark.py); skip locally with -m \"not slow\", CI runs everything",
+    "browser: opens the real pages in Chromium through Playwright (tests/browser); skipped when Playwright is missing",
 ]
 
 [tool.ruff]

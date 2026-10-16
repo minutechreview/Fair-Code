@@ -30,6 +30,7 @@ withholding the real text.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from pathlib import Path
@@ -39,10 +40,16 @@ import pandas as pd
 from . import __version__
 from .compare import compare
 from .detect import VALID_KINDS
-from .loaders_extra import get_xlsx_sheet_info, read_table
+from .loaders_extra import (
+    encoding_ignored_note,
+    held_out_encoding_ignored_notes,
+    get_xlsx_sheet_info,
+    read_table,
+)
 from .profiler import _resolve_opts, parse_reference, profile
 from .provenance import build as build_provenance
-from .proxy import parse_held_out_specs
+from .provenance import proxy_params
+from .proxy import PROXY_ALPHA, parse_held_out_specs, partition_held_out_path
 from .proxy import proxy_hints as compute_proxy_hints
 from .report import compare_to_csv, to_csv
 
@@ -81,7 +88,7 @@ _RESULTS_ROUND_DECIMALS = 6
 _RESULTS_NUMERIC_COLUMNS = ("value", "ci_low", "ci_high", "p_value")
 
 
-def _read_table_or_raise(path: str):
+def _read_table_or_raise(path: str, encoding: str | None = None):
     """Read a table, translating loader failures into a clear message instead
     of a raw pandas/parser traceback. Mirrors cli.py's _read_or_exit, minus
     the SystemExit - a tool function should raise, not exit the process.
@@ -94,13 +101,33 @@ def _read_table_or_raise(path: str):
     if path == "-":
         raise ValueError("stdin input ('-') is not supported over MCP - pass a real file path instead")
     try:
-        return read_table(path)
+        return read_table(path, encoding=encoding)
     except FileNotFoundError:
         raise FileNotFoundError(f"file not found: {path}") from None
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(
+            f"could not read dataset {path}: not valid {encoding or 'utf-8'} ({exc}); "
+            f"pass encoding (e.g. 'latin-1', 'cp1252', 'utf-16')") from exc
     except RuntimeError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface any parse failure plainly
         raise RuntimeError(f"could not read dataset {path}: {exc}") from exc
+
+
+# The pre-#950 sheet-note keys, kept as aliases of the sheet entries in `notes`. Removed in the next
+# major release; tests/test_mcp_server.py fails when __version__ reaches it with them still present (#984).
+SHEET_NOTE_ALIASES = ("sheet_note", "sheet_note_a", "sheet_note_b", "sheet_notes")
+SHEET_NOTE_ALIASES_REMOVED_IN = "3.0.0"
+
+
+def _flag_deprecated_aliases(result):
+    """Add a `deprecated` list naming each sheet-note alias present in `result`, so a caller that
+    still reads one is told, once per call, what replaces it and when it goes (#984)."""
+    present = [k for k in SHEET_NOTE_ALIASES if k in result]
+    if present:
+        result["deprecated"] = [{"field": k, "use": "notes", "removed_in": SHEET_NOTE_ALIASES_REMOVED_IN}
+                                for k in present]
+    return result
 
 
 def _sheet_note(path):
@@ -133,10 +160,21 @@ def _check_overrides(overrides, known_columns):
         raise ValueError(f"invalid kind for {pairs}; choose from {', '.join(_MAP_CHOICES)}")
 
 
+def _exact_kwargs(permutations, max_rows):
+    """exact_permutations / exact_max_rows as proxy_hints() keywords, only when given (#906)."""
+    kw = {}
+    if permutations is not None:
+        kw["permutations"] = permutations
+    if max_rows is not None:
+        kw["max_rows"] = max_rows
+    return kw
+
+
 def _build_opts(min_share=None, intersection_floor=None, imbalance_flag=None,
                 missing_flag=None, min_group_size=None, cross=None,
                 reference_path=None, max_categorical_card=None,
-                max_dimension_groups=None):
+                max_dimension_groups=None, encoding=None, max_age=None,
+                age_reference_year=None, keywords=None):
     opts = {
         "min_share": min_share,
         "intersection_floor": intersection_floor,
@@ -145,6 +183,9 @@ def _build_opts(min_share=None, intersection_floor=None, imbalance_flag=None,
         "min_group_size": min_group_size,
         "max_categorical_card": max_categorical_card,
         "max_dimension_groups": max_dimension_groups,
+        "max_age": max_age,
+        "age_reference_year": age_reference_year,
+        "keywords": keywords,
     }
     if cross:
         if len(cross) != 2 or not all(cross):
@@ -153,7 +194,7 @@ def _build_opts(min_share=None, intersection_floor=None, imbalance_flag=None,
             raise ValueError(f"cross needs two different columns, got '{cross[0]}' twice")
         opts["cross"] = list(cross)
     if reference_path:
-        opts["reference"] = parse_reference(_read_table_or_raise(reference_path))
+        opts["reference"] = parse_reference(_read_table_or_raise(reference_path, encoding))
     return opts
 
 
@@ -177,22 +218,32 @@ def _profile_dataset_impl(path, overrides=None, cross=None, reference_path=None,
                           min_share=None, intersection_floor=None,
                           imbalance_flag=None, missing_flag=None,
                           min_group_size=None, include_provenance=True,
-                          max_categorical_card=None, max_dimension_groups=None):
+                          max_categorical_card=None, max_dimension_groups=None,
+                          encoding=None, max_age=None, age_reference_year=None,
+                          keywords=None):
     overrides = overrides or {}
-    df = _read_table_or_raise(path)
+    df = _read_table_or_raise(path, encoding)
     _check_overrides(overrides, df.columns)
     opts = _build_opts(min_share, intersection_floor, imbalance_flag,
                        missing_flag, min_group_size, cross, reference_path,
-                       max_categorical_card, max_dimension_groups)
+                       max_categorical_card, max_dimension_groups, encoding, max_age,
+                       age_reference_year, keywords)
     result = profile(df, overrides, opts)
     note = _sheet_note(path)
     if note:
-        result["sheet_note"] = note
+        result["sheet_note"] = note   # kept as an alias of the entry in `notes` (#950)
+    notes = [n for n in (note, encoding_ignored_note(path, encoding)) if n]
+    if notes:
+        result["notes"] = notes
+    _flag_deprecated_aliases(result)
     if include_provenance:
+        from .provenance import sniff_effective_encoding
         digests = [("dataset_hash", path)]
         if reference_path:
             digests.append(("reference_hash", reference_path))
-        result = dict(result, provenance=build_provenance(digests, _resolve_opts(opts), overrides))
+        enc = encoding or sniff_effective_encoding(path)
+        result = dict(result, provenance=build_provenance(digests, _resolve_opts(opts), overrides,
+                                                          encodings={"dataset_hash": enc} if enc else None))
     return result
 
 
@@ -202,48 +253,97 @@ def _compare_datasets_impl(path_a, path_b, overrides=None,
                            min_group_size=None, include_provenance=True,
                            proxy_hints=False, max_categorical_card=None,
                            max_dimension_groups=None, held_out_with_a=None,
-                           held_out_with_b=None, alpha=None, correction=None):
+                           held_out_with_b=None, alpha=None, correction=None,
+                           encoding=None, max_age=None, age_reference_year=None,
+                           key_normalize=False, exact=False, keywords=None,
+                           exact_permutations=None, exact_max_rows=None, renames=None):
     overrides = overrides or {}
-    df_a = _read_table_or_raise(path_a)
-    df_b = _read_table_or_raise(path_b)
+    df_a = _read_table_or_raise(path_a, encoding)
+    df_b = _read_table_or_raise(path_b, encoding)
+    read_held = functools.partial(_read_table_or_raise, encoding=encoding)
     if (held_out_with_a or held_out_with_b) and not proxy_hints:
         raise ValueError("held_out_with_a/held_out_with_b need proxy_hints=true")
     _check_overrides(overrides, set(df_a.columns) | set(df_b.columns))
     opts = _build_opts(min_share, intersection_floor, imbalance_flag,
                        missing_flag, min_group_size,
                        max_categorical_card=max_categorical_card,
-                       max_dimension_groups=max_dimension_groups)
+                       max_dimension_groups=max_dimension_groups, max_age=max_age,
+                       age_reference_year=age_reference_year, keywords=keywords)
     profile_a = profile(df_a, overrides, opts)
     profile_b = profile(df_b, overrides, opts)
-    result = compare(profile_a, profile_b, name_a=path_a, name_b=path_b)
+    result = compare(profile_a, profile_b, name_a=path_a, name_b=path_b, renames=renames)
     note_a, note_b = _sheet_note(path_a), _sheet_note(path_b)
     if note_a:
         result["sheet_note_a"] = note_a
     if note_b:
         result["sheet_note_b"] = note_b
+    enc_notes = [
+        n for n in (
+            encoding_ignored_note(path_a, encoding),
+            encoding_ignored_note(path_b, encoding),
+        ) if n
+    ]
+    # One encoding note is enough when both paths are binary formats; every message goes in `notes`,
+    # and sheet_note_a/_b stay as aliases (#950).
+    notes = [n for n in (note_a, note_b) if n] + enc_notes[:1]
+    if notes:
+        result["notes"] = notes
+    _flag_deprecated_aliases(result)
+    skipped_a, skipped_b = [], []   # near-unique held-out columns, for provenance (#921)
     if proxy_hints:
+        held_notes = (held_out_encoding_ignored_notes(held_out_with_a, encoding)
+                      + held_out_encoding_ignored_notes(held_out_with_b, encoding))   # + near-unique skips (#908, #923)
         kw = {} if alpha is None else {"alpha": alpha}
         kw["correction"] = correction
-        held_a = parse_held_out_specs(held_out_with_a, df_a, _read_table_or_raise,
-                                      flag="held_out_with_a") if held_out_with_a else None
-        held_b = parse_held_out_specs(held_out_with_b, df_b, _read_table_or_raise,
-                                      flag="held_out_with_b") if held_out_with_b else None
+        kw["max_age"] = _resolve_opts(opts)["max_age"]
+        kw["age_reference_year"] = _resolve_opts(opts)["age_reference_year"]
+        kw["exact"] = exact
+        kw.update(_exact_kwargs(exact_permutations, exact_max_rows))
+        held_a = parse_held_out_specs(held_out_with_a, df_a, read_held, flag="held_out_with_a",
+                                      normalize_keys=key_normalize, notes=held_notes, skipped=skipped_a,
+                                      max_categorical_card=_resolve_opts(opts)["max_categorical_card"]) if held_out_with_a else None
+        held_b = parse_held_out_specs(held_out_with_b, df_b, read_held, flag="held_out_with_b",
+                                      normalize_keys=key_normalize, notes=held_notes, skipped=skipped_b,
+                                      max_categorical_card=_resolve_opts(opts)["max_categorical_card"]) if held_out_with_b else None
         result["proxy_hints_a"] = compute_proxy_hints(df_a, profile_a["dimensions"],
                                                       held_out=held_a, **kw)
         result["proxy_hints_b"] = compute_proxy_hints(df_b, profile_b["dimensions"],
                                                       held_out=held_b, **kw)
+        if held_notes:
+            result["notes"] = result.get("notes", []) + held_notes
     if include_provenance:
+        from .provenance import sniff_effective_encoding
+        enc_a = encoding or sniff_effective_encoding(path_a)
+        enc_b = encoding or sniff_effective_encoding(path_b)
+        encs = {}
+        if enc_a:
+            encs["dataset_hash_a"] = enc_a
+        if enc_b:
+            encs["dataset_hash_b"] = enc_b
         provenance = build_provenance(
             [("dataset_hash_a", path_a), ("dataset_hash_b", path_b)],
-            _resolve_opts(opts), overrides)
+            {**_resolve_opts(opts),
+             **({"renames": dict(renames)} if renames else {}),
+             **(proxy_params(PROXY_ALPHA if alpha is None else alpha, correction, exact,
+                           exact_permutations, exact_max_rows) if proxy_hints else {})},
+            overrides,
+            held_out=[("proxy_hints_with_a", held_out_with_a, list(df_a.columns), skipped_a),
+                      ("proxy_hints_with_b", held_out_with_b, list(df_b.columns), skipped_b)] if proxy_hints else (),
+            encodings=encs if encs else None, held_out_encoding=encoding)
         result = dict(result, provenance=provenance)
     return result
 
 
 def _proxy_hints_impl(path, overrides=None, held_out_with=None, alpha=None,
-                      correction=None):
+                      correction=None, encoding=None, include_provenance=True,
+                      key_normalize=False, exact=False, max_categorical_card=None,
+                      max_dimension_groups=None, max_age=None, age_reference_year=None,
+                      keywords=None, exact_permutations=None, exact_max_rows=None):
     """`overrides` forces a column's detected kind the same way profile()'s
-    own `overrides` does; no other threshold knob affects this tool -
+    own `overrides` does; the dimension-shaping knobs (max_categorical_card,
+    max_dimension_groups, max_age, age_reference_year, keywords) are passed
+    through to profile() so the tested dimensions match profile_dataset's
+    (#883). No other threshold knob affects this tool -
     proxy_hints() (faircode/proxy.py) tests every detected dimension
     unconditionally, reading only each dimension's `name`/`kind`, neither of
     which min_share/intersection_floor/imbalance_flag/missing_flag/
@@ -259,6 +359,9 @@ def _proxy_hints_impl(path, overrides=None, held_out_with=None, alpha=None,
     parse_held_out_specs, so the column/row-count validation is identical to
     the CLI's.
 
+    `include_provenance` (default true) attaches a provenance block containing
+    the dataset hash, alpha, correction, overrides, and held-out files (#860).
+
     Returns a dict, not a bare list: the MCP SDK splits a list return value
     into one content block per element (confirmed - a 98-item result became
     98 separate content blocks, and an empty list became zero blocks, which
@@ -267,18 +370,51 @@ def _proxy_hints_impl(path, overrides=None, held_out_with=None, alpha=None,
     always exactly one JSON object - and makes "no hints found" unambiguous.
     """
     overrides = overrides or {}
-    df = _read_table_or_raise(path)
+    df = _read_table_or_raise(path, encoding)
     _check_overrides(overrides, df.columns)
-    result = profile(df, overrides)
-    held_out = parse_held_out_specs(held_out_with, df, _read_table_or_raise,
-                                    flag="held_out_with") if held_out_with else None
+    # Same dimension-shaping knobs as profile_dataset, so the hints describe the
+    # dimensions (and age bands) the agent just profiled (#883).
+    opts = _build_opts(max_categorical_card=max_categorical_card,
+                       max_dimension_groups=max_dimension_groups, max_age=max_age,
+                       age_reference_year=age_reference_year, keywords=keywords)
+    resolved = _resolve_opts(opts)
+    result = profile(df, overrides, opts)
+    held_notes = held_out_encoding_ignored_notes(held_out_with, encoding)   # + near-unique skips (#908, #923)
+    held_skipped = []
+    held_out = parse_held_out_specs(held_out_with, df, functools.partial(_read_table_or_raise, encoding=encoding),
+                                    flag="held_out_with",
+                                    normalize_keys=key_normalize, notes=held_notes, skipped=held_skipped,
+                                    max_categorical_card=resolved["max_categorical_card"]) if held_out_with else None
     kw = {} if alpha is None else {"alpha": alpha}
     kw["correction"] = correction
+    kw["exact"] = exact
+    kw.update(_exact_kwargs(exact_permutations, exact_max_rows))
+    kw["max_age"] = resolved["max_age"]
+    kw["age_reference_year"] = resolved["age_reference_year"]
     output = {"hints": compute_proxy_hints(df, result["dimensions"], held_out=held_out, **kw)}
-    notes = [n for n in (_sheet_note(path),) if n]
-    notes += [n for spec in (held_out_with or []) for n in (_sheet_note(spec.partition("=")[0]),) if n]
+    sheet_notes = [n for n in (_sheet_note(path),) if n]
+    sheet_notes += [n for spec in (held_out_with or []) for n in (_sheet_note(partition_held_out_path(spec)[0]),) if n]
+    if sheet_notes:
+        output["sheet_notes"] = sheet_notes   # deprecated alias of the sheet entries in `notes` (#950)
+    notes = sheet_notes + [n for n in (encoding_ignored_note(path, encoding),) if n] + held_notes
     if notes:
-        output["sheet_notes"] = notes
+        output["notes"] = notes
+    _flag_deprecated_aliases(output)
+    if include_provenance:
+        from .provenance import sniff_effective_encoding
+        enc = encoding or sniff_effective_encoding(path)
+        output["provenance"] = build_provenance(
+            [("dataset_hash", path)],
+            params={**proxy_params(PROXY_ALPHA if alpha is None else alpha, correction, exact,
+                                   exact_permutations, exact_max_rows),
+                    **{k: resolved[k] for k in ("max_categorical_card", "max_dimension_groups",
+                                                "max_age", "age_reference_year", "keywords")}},
+            overrides=overrides,
+            held_out=[("proxy_hints_with", held_out_with, list(df.columns), held_skipped)] if held_out_with else (),
+            key_normalize=key_normalize,
+            held_out_encoding=encoding,
+            encodings={"dataset_hash": enc} if enc else None,
+        )
     return output
 
 
@@ -418,6 +554,10 @@ def build_server():
                         include_provenance: bool = True,
                         max_categorical_card: int | None = None,
                         max_dimension_groups: int | None = None,
+                        encoding: str | None = None,
+                        max_age: float | None = None,
+                        age_reference_year: int | None = None,
+                        keywords: dict[str, list[str]] | None = None,
                         format: str = "json") -> dict:
         """Profile a tabular dataset (.csv/.tsv/.xlsx/.json/.parquet) for
         demographic representation: per-dimension imbalance/missing/skew,
@@ -437,6 +577,35 @@ def build_server():
         max_dimension_groups=50) when set, matching the CLI's
         --max-categorical-card/--max-dimension-groups.
 
+        `max_age` (default 120) sets the age above which a numeric age is treated
+        as implausible - flagged and left out of the age bands rather than counted
+        in the oldest band (CLI `--max-age`); on `compare_datasets` too.
+
+        `keywords` (default none) adds extra column-name vocabulary for detection,
+        `{"sex": ["sesso"], "age": ["eta"], "exact_only": ["eta"]}` (kinds: sex,
+        race, age, geography; CLI `--keywords FILE`); on `compare_datasets` too.
+
+        `age_reference_year` (default off) converts whole numbers from 1900 up to
+        that year in an age column to ages as of it, for birth-year columns such as
+        `yob` (CLI `--age-reference-year`); on `compare_datasets` too.
+
+        `exact` (default false, CLI `--proxy-exact`) replaces the chi-squared p-value
+        of a small-expected-cell hint with Fisher's exact test (2x2) or a seeded
+        permutation p-value, and adds `p_method` to every hint.
+        `exact_permutations` (default 1000) and `exact_max_rows` (default 20000) set the
+        shuffle count and the row cap above which a small-cell table is labelled
+        `chi2-capped` (CLI `--proxy-exact-permutations` / `--proxy-exact-max-rows`).
+
+        `key_normalize` (default false) makes `PATH=COLUMN:KEY` join keys match
+        case-insensitively, ignoring surrounding spaces and leading zeros; a key
+        may be composite (`id+visit`). Same on `proxy_hints` (CLI
+        `--proxy-key-normalize`). A spec ending in `~` (`PATH=COLUMN:KEY~`)
+        normalises just that file's key.
+
+        `encoding` names the text encoding of delimited files (e.g. "latin-1",
+        "cp1252", "utf-16"); default is a UTF-8/16/32 byte-order mark if present,
+        else utf-8. Same on `compare_datasets` and `proxy_hints`.
+
         `include_provenance` (default true) attaches a provenance block -
         faircode version, a SHA-256 hash of the dataset file, and the resolved
         thresholds - so the result can be tied back to exactly what produced
@@ -452,7 +621,8 @@ def build_server():
                 path, overrides, cross, reference_path, min_share,
                 intersection_floor, imbalance_flag, missing_flag,
                 min_group_size, include_provenance, max_categorical_card,
-                max_dimension_groups), format, to_csv)
+                max_dimension_groups, encoding, max_age, age_reference_year, keywords),
+                format, to_csv)
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
             raise _as_tool_error(exc) from exc
 
@@ -472,6 +642,15 @@ def build_server():
                          held_out_with_b: list[str] | None = None,
                          alpha: float | None = None,
                          correction: str | None = None,
+                         encoding: str | None = None,
+                         max_age: float | None = None,
+                         age_reference_year: int | None = None,
+                         key_normalize: bool = False,
+                         exact: bool = False,
+                         keywords: dict[str, list[str]] | None = None,
+                         exact_permutations: int | None = None,
+                         exact_max_rows: int | None = None,
+                         renames: dict[str, str] | None = None,
                          format: str = "json") -> dict:
         """Compare two tabular datasets (e.g. a training set and a production
         snapshot) for representation drift: which dimensions/groups appeared,
@@ -489,7 +668,7 @@ def build_server():
         a single call can get drift and both datasets' proxy hints together,
         matching `faircode compare --proxy-hints`. Needs the optional 'scipy'
         extra (`pip install faircode[proxy]`). `held_out_with_a`/`held_out_with_b`
-        (need `proxy_hints`) are lists of "PATH=COLUMN" strings testing a column
+        (need `proxy_hints`) are lists of "PATH=COLUMN[:KEY][@ENCODING]" strings testing a column
         already dropped from dataset A / B, mirroring the CLI's
         --proxy-hints-with-a/-b; `alpha` (default 0.05, in (0, 1]) is the
         proxy-hint significance level (--proxy-alpha); `correction` ("bonferroni" or
@@ -497,13 +676,21 @@ def build_server():
         (--proxy-correction) and adds `p_adjusted` to each hint. `format`
         ("json" default, or "csv") returns `{"csv": "..."}` - the same text
         `faircode compare --csv` writes.
+
+        `renames` ({"race": "ethnicity"}, CLI `--rename`) compares the second dataset's
+        dimension `ethnicity` as the first one's `race`, for a column renamed between
+        exports; the tables are not edited, and the pairing is recorded in the result's
+        `renamed_dimensions` and the provenance params.
         """
         try:
             return _as_format(_compare_datasets_impl(
                 path_a, path_b, overrides, min_share, intersection_floor,
                 imbalance_flag, missing_flag, min_group_size, include_provenance,
                 proxy_hints, max_categorical_card, max_dimension_groups,
-                held_out_with_a, held_out_with_b, alpha, correction), format, compare_to_csv)
+                held_out_with_a, held_out_with_b, alpha, correction, encoding, max_age,
+                age_reference_year, key_normalize, exact, keywords,
+                exact_permutations, exact_max_rows, renames),
+                format, compare_to_csv)
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
             raise _as_tool_error(exc) from exc
 
@@ -511,7 +698,18 @@ def build_server():
     def proxy_hints(path: str, overrides: dict[str, str] | None = None,
                     held_out_with: list[str] | None = None,
                     alpha: float | None = None,
-                    correction: str | None = None) -> dict:
+                    correction: str | None = None,
+                    encoding: str | None = None,
+                    include_provenance: bool = True,
+                    key_normalize: bool = False,
+                    exact: bool = False,
+                    max_categorical_card: int | None = None,
+                    max_dimension_groups: int | None = None,
+                    max_age: float | None = None,
+                    age_reference_year: int | None = None,
+                    keywords: dict[str, list[str]] | None = None,
+                    exact_permutations: int | None = None,
+                    exact_max_rows: int | None = None) -> dict:
         """Flag pairs of detected demographic columns that are strongly
         statistically associated (chi-squared test of independence, p < `alpha`,
         default 0.05, in (0, 1])
@@ -532,12 +730,28 @@ def build_server():
         nothing here can flag a remaining column as a proxy for it unless
         `held_out_with` is given. `held_out_with` is a list of "PATH=COLUMN"
         strings (mirroring the CLI's --proxy-hints-with flag), each pointing
-        at a file whose rows align 1:1 with `path` and a column to pull the
-        dropped attribute's original values from. See faircode/SPEC.md
-        section 3 and issue #328.
+        at a file whose rows align 1:1 with `path` (or, with "PATH=COLUMN:KEY", are
+        joined to it on a key column present in both files) and a column to pull the
+        dropped attribute's original values from. An `@ENCODING` suffix overrides
+        `encoding` for that one file. See faircode/SPEC.md
+        section 13 and issue #328.
+
+        `max_categorical_card`, `max_dimension_groups`, `max_age`,
+        `age_reference_year` and `keywords` mean what they do on `profile_dataset`
+        and decide which dimensions (and age bands) are tested, so pass the same
+        values you profiled with and the hints describe the same data (#883).
+
+        `include_provenance` (default true) attaches a provenance block
+        (dataset_hash, alpha, correction, those dimension knobs, overrides,
+        proxy_hints_with) to tie the hints back to the exact dataset and
+        parameters that produced them (#860).
         """
         try:
-            return _proxy_hints_impl(path, overrides, held_out_with, alpha, correction)
+            return _proxy_hints_impl(path, overrides, held_out_with, alpha, correction, encoding,
+                                     include_provenance, key_normalize, exact,
+                                     max_categorical_card, max_dimension_groups, max_age,
+                                     age_reference_year, keywords,
+                                     exact_permutations, exact_max_rows)
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
             raise _as_tool_error(exc) from exc
 
@@ -603,7 +817,14 @@ def build_server():
 
 
 def main() -> None:
-    build_server().run()
+    try:
+        server = build_server()
+    except ImportError as exc:   # the 'mcp' extra is missing (#995)
+        import sys
+        print("faircode-mcp needs the optional 'mcp' extra: pip install faircode[mcp] "
+              f"({exc})", file=sys.stderr)
+        raise SystemExit(2) from None
+    server.run()
 
 
 if __name__ == "__main__":

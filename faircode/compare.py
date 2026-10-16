@@ -15,8 +15,14 @@ population-drift metric in ML monitoring, alongside Total Variation Distance
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
 
-from .profiler import _is_age_band_label, _r
+from .profiler import NO_KIND_DETECTED_FLAG, _is_age_band_label, _r
+
+# A one-sided A/B dimension pair of the same kind whose group labels overlap at least
+# this much (Jaccard) is reported as a probable rename (#866). Mirror in the JS engine.
+RENAME_MIN_OVERLAP = 0.5
 
 # ── Defaults (SPEC section 7) ───────────────────────────────────────────────
 PSI_EPSILON = 0.0001      # share floor so appeared/disappeared groups stay finite
@@ -108,17 +114,20 @@ def _compare_dimension(dim_a: dict, dim_b: dict) -> dict:
         b = sb.get(label, 0.0)
         psi_total += _psi_term(a, b)
         tvd_total += abs(b - a)
+        delta = _r(b - a, 4)
         if a == 0 and b > 0:
             status = "appeared"
         elif a > 0 and b == 0:
             status = "disappeared"
+        elif delta == 0.0:
+            status = "unchanged"
         else:
             status = "shifted"
         groups.append({
             "label": str(label),
             "share_a": _r(a, 4),
             "share_b": _r(b, 4),
-            "share_delta": _r(b - a, 4),
+            "share_delta": delta,
             "status": status,
         })
     # most-shifted first, then label asc - deterministic tie-break so JS agrees.
@@ -147,9 +156,142 @@ def _compare_dimension(dim_a: dict, dim_b: dict) -> dict:
     }
 
 
+def _label_overlap(labels_a: set, labels_b: set) -> float:
+    """Jaccard overlap of two label sets after a one-to-one match: exact labels
+    first, then case-insensitive equality, then an alphabetic label that is a
+    case-insensitive prefix of the other (`M`/`Male`, `White`/`white`). Greedy over
+    sorted labels so the answer is deterministic; mirrored in profiler-engine.js
+    (#887)."""
+    rest_a, rest_b = sorted(labels_a), sorted(labels_b)
+    matched = 0
+
+    def take(same):
+        nonlocal matched, rest_a, rest_b
+        left_a = []
+        for a in rest_a:
+            hit = next((b for b in rest_b if same(a, b)), None)
+            if hit is None:
+                left_a.append(a)
+            else:
+                rest_b.remove(hit)
+                matched += 1
+        rest_a = left_a
+
+    take(lambda a, b: a == b)
+    take(lambda a, b: a.lower() == b.lower())
+    take(lambda a, b: _alpha_prefix(a.lower(), b.lower()) or _alpha_prefix(b.lower(), a.lower()))
+    total = len(labels_a) + len(labels_b) - matched
+    return matched / total if total else 0.0
+
+
+def _alpha_prefix(short: str, long: str) -> bool:
+    return short.isalpha() and long.startswith(short)
+
+
+# Words too generic to show two columns are the same thing (`state_code` vs `region_code`).
+RENAME_GENERIC_TOKENS = frozenset(
+    ["id", "code", "cd", "num", "no", "type", "group", "category", "cat", "class", "val", "value", "flag", "ind"])
+_NAME_TOKEN = re.compile(r"[^\W\d_]+|[0-9]+")
+_LETTER_RUN = re.compile(r"[^\W\d_]+\Z")
+
+
+def _split_humps(run: str) -> list[str]:
+    """Cut a letter run where a lower-case letter (Unicode Ll) meets an upper-case one (Lu); the same
+    scan runs in profiler-engine.js splitHumps(), which cannot use a regex lookbehind (#956)."""
+    parts, piece, prev = [], "", ""
+    for ch in run:
+        if prev and unicodedata.category(prev) == "Ll" and unicodedata.category(ch) == "Lu":
+            if piece:
+                parts.append(piece)
+            piece = ch
+        else:
+            piece += ch
+        prev = ch
+    if piece:
+        parts.append(piece)
+    return parts
+
+
+def _fold(t: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFD", t) if not unicodedata.combining(ch))
+
+
+def _name_tokens(name: str) -> set:
+    """Accent-folded, lower-cased words of a column name (`sex_code`, `SexCode` -> sex,
+    code, `género` -> genero) minus the generic ones; #917. The same split and fold run
+    in profiler-engine.js (#902)."""
+    tokens = []
+    for run in _NAME_TOKEN.findall(name):
+        match = _LETTER_RUN.match(run)
+        tokens.extend(_split_humps(run) if match else [run])
+    return {_fold(t.lower()) for t in tokens} - RENAME_GENERIC_TOKENS
+
+
+def _possible_renames(result_a: dict, result_b: dict, removed: list, added: list) -> list:
+    """Pair each A-only dimension with the B-only dimension of the same kind whose
+    group labels overlap most (Jaccard >= RENAME_MIN_OVERLAP, counting a label that
+    differs only in case or is an alphabetic prefix of the other, `M`/`Male`, as a
+    match), each B used once. A suggestion only - nothing is compared across the
+    pair (#866, #887)."""
+    by_a = {d["name"]: d for d in result_a["dimensions"]}
+    by_b = {d["name"]: d for d in result_b["dimensions"]}
+    taken: set[str] = set()
+    pairs = []
+    for name_a in removed:
+        labels_a = {g["label"] for g in by_a[name_a]["groups"]}
+        best, best_overlap = None, 0.0
+        for name_b in added:
+            if name_b in taken or by_b[name_b]["kind"] != by_a[name_a]["kind"]:
+                continue
+            labels_b = {g["label"] for g in by_b[name_b]["groups"]}
+            overlap = _label_overlap(labels_a, labels_b)
+            if overlap > best_overlap:
+                best, best_overlap = name_b, overlap
+        if best is not None and best_overlap >= RENAME_MIN_OVERLAP:
+            taken.add(best)
+            pairs.append({"a": name_a, "b": best, "overlap": _r(best_overlap, 4), "reason": "labels"})
+    # Second signal: a column renamed *and* re-coded (`sex` M/F vs `sex_code` 1/2) shares no label
+    # shape, so pair leftovers of the same kind whose names share a word and whose group counts are
+    # close (an `Unknown`/`9` or a stray code is common), preferring the most shared words and then
+    # the closest count (#902, #918).
+    paired = {p["a"] for p in pairs}
+    for name_a in removed:
+        if name_a in paired:
+            continue
+        tokens_a = _name_tokens(name_a)
+        count_a = len(by_a[name_a]["groups"])
+        best, best_key = None, None
+        for name_b in added:
+            if name_b in taken or by_b[name_b]["kind"] != by_a[name_a]["kind"]:
+                continue
+            count_b = len(by_b[name_b]["groups"])
+            if abs(count_a - count_b) > max(1, max(count_a, count_b) // 4):
+                continue
+            shared = len(tokens_a & _name_tokens(name_b))
+            if shared and (best_key is None or (shared, -abs(count_a - count_b)) > best_key):
+                best, best_key = name_b, (shared, -abs(count_a - count_b))
+        if best is not None:
+            taken.add(best)
+            pair = {"a": name_a, "b": best, "overlap": 0.0, "reason": "names"}
+            count_b = len(by_b[best]["groups"])
+            if count_a != count_b:
+                pair["group_counts"] = [count_a, count_b]
+            pairs.append(pair)
+    return pairs
+
+
+def rename_evidence(r: dict) -> str:
+    """Why a possible rename was suggested, as flag/report text (#953)."""
+    if r.get("reason") == "names":
+        counts = r.get("group_counts")
+        return ("similar names and a similar number of groups (%d vs %d)" % tuple(counts)
+                if counts else "similar names and the same number of groups")
+    return f"{r['overlap'] * 100:.0f}% of their group labels overlap"
+
+
 def _build_flags(result_a: dict, result_b: dict, score_delta: int | None,
                  dimensions: list, added: list, removed: list,
-                 name_a: str, name_b: str) -> tuple[list, bool]:
+                 name_a: str, name_b: str, renames=()) -> tuple[list, bool]:
     """Returns (flags, drift_detected). `flags` is every human-readable
     notice, including a kind-mismatch dimension's "drift comparison
     skipped" message - informational, since the underlying comparison
@@ -175,6 +317,12 @@ def _build_flags(result_a: dict, result_b: dict, score_delta: int | None,
                 f"{cd['missing_pct_a'] * 100:.1f}% → {cd['missing_pct_b'] * 100:.1f}%"
             )
             drift_detected = True
+        if cd.get("implausible_a", 0) != cd.get("implausible_b", 0):
+            flags.append(
+                f"{cd['name']}: implausible age values differ ({cd['implausible_a']} in "
+                f"{name_a}, {cd['implausible_b']} in {name_b}) - they were treated as "
+                f"missing in each, so check the age shares for artefacts"
+            )
         if cd["kind_mismatch"]:
             if cd["kind_a"] != cd["kind_b"]:
                 flags.append(
@@ -214,11 +362,52 @@ def _build_flags(result_a: dict, result_b: dict, score_delta: int | None,
     for n in removed:
         flags.append(f"dimension '{n}' is present only in {name_a}")
         drift_detected = True
+    for r in renames:
+        evidence = rename_evidence(r)
+        flags.append(
+            f"'{r['a']}' ({name_a}) and '{r['b']}' ({name_b}) look like the same dimension "
+            f"({evidence}) - rename one column so the names match to compare them"
+        )
+    for name, result in ((name_a, result_a), (name_b, result_b)):
+        if NO_KIND_DETECTED_FLAG in result.get("flags", ()):
+            flags.append(
+                f"{name}: no column name was recognised as sex, race, age or geography, so "
+                f"every dimension is a plain categorical - map columns with --map COL=KIND"
+            )
     return flags, drift_detected
 
 
-def compare(result_a: dict, result_b: dict, name_a="A", name_b="B") -> dict:
-    """Compare two profile() results for representation drift. See SPEC section 8."""
+def apply_renames(result_a: dict, result_b: dict, renames: dict) -> dict:
+    """A copy of `result_b` with each B dimension named `renames[a_name]` renamed to
+    `a_name`, so a renamed column is compared as one dimension (`--rename race=ethnicity`,
+    #913). The tables are not touched; raises ValueError for a self-rename, an unknown
+    name, a duplicate target, or an A name B already has."""
+    names_a = {d["name"] for d in result_a["dimensions"]}
+    names_b = {d["name"] for d in result_b["dimensions"]}
+    by_b = {}
+    for a_name, b_name in renames.items():
+        if a_name == b_name:
+            raise ValueError(f"--rename: '{a_name}' renames a dimension to itself")
+        if a_name not in names_a:
+            raise ValueError(f"--rename: '{a_name}' is not a dimension of the first dataset")
+        if b_name not in names_b:
+            raise ValueError(f"--rename: '{b_name}' is not a dimension of the second dataset")
+        if a_name in names_b:
+            raise ValueError(f"--rename: the second dataset already has a dimension named '{a_name}'")
+        if b_name in by_b:
+            raise ValueError(f"--rename: '{b_name}' is renamed more than once")
+        by_b[b_name] = a_name
+    dims = [dict(d, name=by_b[d["name"]]) if d["name"] in by_b else d for d in result_b["dimensions"]]
+    return dict(result_b, dimensions=dims)
+
+
+def compare(result_a: dict, result_b: dict, name_a="A", name_b="B", renames=None) -> dict:
+    """Compare two profile() results for representation drift. See SPEC section 8.
+
+    `renames` ({a_name: b_name}) compares the named B dimension as the A one (#913)."""
+    renamed_b = dict(renames or {})
+    if renamed_b:
+        result_b = apply_renames(result_a, result_b, renamed_b)
     dims_a = {d["name"]: d for d in result_a["dimensions"]}
     dims_b = {d["name"]: d for d in result_b["dimensions"]}
 
@@ -227,12 +416,22 @@ def compare(result_a: dict, result_b: dict, name_a="A", name_b="B") -> dict:
     removed = [d["name"] for d in result_a["dimensions"] if d["name"] not in dims_b]
 
     dimensions = [_compare_dimension(dims_a[n], dims_b[n]) for n in shared]
+    # Data-quality carry-over (#868): ages treated as implausible on either side, as
+    # optional keys so the common result shape is unchanged.
+    for cd in dimensions:
+        imp_a = dims_a[cd["name"]].get("implausible_values", 0)
+        imp_b = dims_b[cd["name"]].get("implausible_values", 0)
+        if imp_a or imp_b:
+            cd["implausible_a"], cd["implausible_b"] = imp_a, imp_b
+    renames = _possible_renames(result_a, result_b, removed, added)
     scores = (result_a["overall_score"], result_b["overall_score"])
     score_delta = scores[1] - scores[0] if None not in scores else None
     flags, drift_detected = _build_flags(result_a, result_b, score_delta, dimensions,
-                                        added, removed, name_a, name_b)
+                                        added, removed, name_a, name_b, renames)
+    for a_name, b_name in renamed_b.items():
+        flags.append(f"dimension '{b_name}' ({name_b}) was compared as '{a_name}' ({name_a}) because of --rename")
 
-    return {
+    result = {
         "a": {"name": name_a, "n_rows": result_a["n_rows"],
               "overall_score": result_a["overall_score"], "grade": result_a["grade"],
               "dimensions_detected": result_a["dimensions_detected"],
@@ -248,3 +447,8 @@ def compare(result_a: dict, result_b: dict, name_a="A", name_b="B") -> dict:
         "flags": flags,
         "drift_detected": drift_detected,
     }
+    if renames:
+        result["possible_renames"] = renames
+    if renamed_b:
+        result["renamed_dimensions"] = [{"a": a, "b": b} for a, b in renamed_b.items()]
+    return result

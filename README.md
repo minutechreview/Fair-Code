@@ -210,7 +210,7 @@ Fair-Code/
 │   ├── test_freeze_paper_results.py     #   results/ -> paper/results-frozen/ snapshot script
 │   ├── test_generate_images.py          #   favicon / OG-image generation
 │   ├── test_js_category_keys.py         #   JS/Python dimension-category key parity
-│   ├── test_js_parity.py                #   JS profiler engine mirrors the Python one
+│   ├── test_js_parity_*.py              #   JS profiler engine mirrors the Python one (profile, proxy, held-out, provenance, exports, compare, keywords, CLI command); js_helpers.py is shared
 │   ├── test_json_edge_cases.py
 │   ├── test_loaders.py
 │   ├── test_manifest.py                 #   audit.yaml validation
@@ -238,12 +238,14 @@ Fair-Code/
 │       ├── summary.csv
 │       ├── requirements-lock.txt
 │       └── figures/*.png
-├── brag-output/                          # generated launch-video assets (composition, fonts, SFX/music) - not project docs
+├── brag-output/                          # generated launch-video assets (composition, fonts, SFX/music) - not project docs; sources and licences in ASSETS.md
 │   └── composition/**
 ├── scripts/
 │   ├── build_explainers.py              # regenerates explainer HTML/JS/sitemap from the JSON source
 │   ├── check_broken_links.py            #   flags dead in-repo markdown links/anchors (make lint)
 │   ├── check_em_dash.py                 #   flags em dashes in tracked source/prose (make lint)
+│   ├── check_issue_refs.py              #   ROADMAP/CHANGELOG issue numbers vs GitHub (make lint, needs gh)
+│   ├── generate_key_fold.py             #   regenerates / verifies the JS case-folding table (make key-fold, key-fold-check)
 │   ├── check_explainer_count.py         #   verifies every "N explainers" mention matches explainers/*.md
 │   ├── check_generated_files_current.py #   verifies build_explainers.py output is up to date
 │   ├── engine-js.js                     #   Node harness for the JS profiler parity tests
@@ -993,8 +995,14 @@ faircode profile data.csv --html report.html       # standalone HTML report
 faircode profile data.csv --csv groups.csv         # flat, one-row-per-group CSV export
 faircode profile data.csv --csv -                  # stream the CSV to stdout (pipe it onward)
 faircode profile data.csv --csv out.csv --csv-provenance   # append dataset hash + thresholds to the CSV
+faircode profile data.csv --csv out.csv --csv-bom          # UTF-8 BOM so Excel on Windows keeps accents
 faircode profile data.csv --max-categorical-card 40 --max-dimension-groups 100   # widen what counts as a dimension
+faircode profile latin1.csv --encoding latin-1     # non-UTF-8 text (a UTF-8/16/32 BOM is detected automatically)
+faircode profile data.csv --max-age 100            # ages above 100 are flagged as implausible, not banded into 75+
+faircode profile yob.csv --age-reference-year 2026 # read birth years (1985...) as ages as of 2026
 faircode profile data.csv --proxy-hints --proxy-alpha 0.01 --proxy-correction holm   # stricter proxy check
+faircode profile data.csv --proxy-hints --proxy-exact   # exact p-values for tables with small expected cells
+faircode profile data.csv --proxy-hints --proxy-exact --proxy-exact-permutations 5000   # finer Monte-Carlo p-values (default 1000 shuffles)
 faircode profile data.csv --fail-under 70          # fail CI if score is below 70
 faircode profile data.csv --min-group-size 50      # warn on subgroups under 50 rows
 faircode compare train.csv prod.csv                # representation drift, A → B (PSI)
@@ -1002,15 +1010,39 @@ faircode compare train.csv prod.csv --html drift.html  # standalone HTML drift r
 faircode compare train.csv prod.csv --csv drift.csv     # flat CSV export (groups + summary)
 faircode compare train.csv prod.csv --map gndr=sex # --map/threshold flags apply to both sides
 faircode compare train.csv prod.csv --fail-on-drift # fail CI if any dimension drifted
+faircode compare train.csv prod.csv --rename race=ethnicity # compare a renamed column as one dimension
 faircode compare train.csv prod.csv --proxy-hints  # chi-squared proxy hints for both datasets
 faircode profile data.csv --map gndr=sex           # fix a missed column
+faircode profile data.csv --keywords words.json    # teach detection extra column names, e.g. {"sex": ["sesso"]}
 faircode profile data.csv --cross race,age         # choose the intersection pair
 faircode profile data.csv --reference census.csv   # score vs a population baseline
 faircode profile data.csv --proxy-hints            # chi-squared proxy hints (needs scipy)
 faircode profile dropped.csv --proxy-hints --proxy-hints-with full.csv=race  # test a column you already removed
+faircode profile dropped.csv --proxy-hints --proxy-hints-with full.csv=race:id  # ...matching rows on an id column, not by position
+faircode profile dropped.csv --proxy-hints --proxy-hints-with full.csv=race:id+visit --proxy-key-normalize  # composite key, ignoring case/spaces/leading zeros
+faircode profile dropped.csv --proxy-hints --proxy-hints-with full.csv=race:id~    # a trailing ~ normalises just this spec's key
+faircode profile dropped.csv --proxy-hints --proxy-key-normalize --proxy-hints-with 'full.csv=race:id!'  # ! keeps this spec's key exact when normalising globally
+faircode profile dropped.csv --proxy-hints --proxy-hints-with full.csv=race@latin-1  # this file is latin-1, whatever --encoding says
 faircode profile data.csv --min-share 0.1          # tune the flagging thresholds
 faircode profile data.csv --json --no-provenance   # drop the run-metadata block
 ```
+
+**Held-out spec syntax.** Each `--proxy-hints-with` (and `-a`/`-b` on `compare`, MCP `held_out_with`) is
+`PATH=COLUMN[:KEY][~|!][@ENCODING]`:
+
+| Part | Meaning | Example |
+|------|---------|---------|
+| `PATH=COLUMN` | the file and the dropped column to test (rows matched by position) | `full.csv=race` |
+| `:KEY` | match rows on a key column present in both files; `id+visit` joins on two | `full.csv=race:id` |
+| `~` after the key | normalise this spec's key (trim, NFKC, case, `42.0` = `42`, leading zeros) | `full.csv=race:id~` |
+| `!` after the key | keep this spec's key exact even with `--proxy-key-normalize` | `full.csv=race:id!` |
+| `@ENCODING` | this file's text encoding, overriding `--encoding` (ignored, with a notice, for `.xlsx`/`.parquet`) | `full.csv=race:id~@latin-1` |
+
+Quote a spec containing `~`, `!`, `@` or spaces so the shell leaves it alone. A file name containing `=` is written `\=` (`data\=v2.csv=race`). A held-out column with
+more distinct values than `--max-categorical-card` that are also at least half its rows looks like an
+identifier, so it is skipped with a note (stderr, the `--json` `notes`, and `tested: false` in the
+provenance) instead of being tested; raise `--max-categorical-card` to test it anyway. Details:
+[SPEC section 13](faircode/SPEC.md#13-proxy-hints-opt-in-informational-not-scored).
 
 For CI, `--fail-under N` returns exit code `1` and explains the failing score
 on stderr when the overall representation score is below `N`; report output,
@@ -1036,8 +1068,32 @@ Point a client at it with:
 ```
 
 `profile_dataset`/`compare_datasets` return the same shape `--json` does, provenance block
-included by default. See [faircode/SPEC.md](faircode/SPEC.md#11-mcp-tools) for the full tool
-contract.
+included by default. Key parameters:
+- **`format="csv"`** on `profile_dataset` and `compare_datasets` returns `{"csv": "<text>"}`, emitting the same flat spreadsheet table as `faircode profile/compare --csv` ([SPEC.md section 12](faircode/SPEC.md#12-csv-export)).
+- **`alpha`** (default `0.05`, in `(0, 1]`) and **`correction="bonferroni"|"holm"`** on `proxy_hints` and `compare_datasets` (`proxy_hints=true`) control significance filtering and multiple-testing adjustment.
+- **`held_out_with_a` / `held_out_with_b`** on `compare_datasets` (with `proxy_hints=true`) mirror `proxy_hints`'s **`held_out_with`**, accepting `"PATH=COLUMN"` specs for attributes dropped prior to profiling.
+
+See [faircode/SPEC.md](faircode/SPEC.md#11-mcp-tools) for the full tool contract and parameter reference.
+
+Optional parameters (defaults and errors in [SPEC.md section 11](faircode/SPEC.md#11-mcp-tools);
+CSV layout in [section 12](faircode/SPEC.md#12-csv-export)):
+
+| Parameter | Tools | What it does |
+|-----------|-------|--------------|
+| `alpha` | `proxy_hints`, `compare_datasets` | Proxy-hint significance level, default 0.05, must be in `(0, 1]` (CLI `--proxy-alpha`) |
+| `correction` | `proxy_hints`, `compare_datasets` | `"bonferroni"` or `"holm"` multiple-comparison correction; adds `p_adjusted` to each hint (CLI `--proxy-correction`) |
+| `held_out_with_a` / `held_out_with_b` | `compare_datasets` | `"PATH=COLUMN"` (or `"PATH=COLUMN:KEY"` to join on a key column) lists testing a column already dropped from dataset A / B; need `proxy_hints=true` (CLI `--proxy-hints-with-a`/`-b`) |
+| `format` | `profile_dataset`, `compare_datasets` | `"json"` (default) or `"csv"`, which returns `{"csv": "..."}`, the same text `--csv` writes |
+| `encoding` | `profile_dataset`, `compare_datasets`, `proxy_hints` | Text encoding of delimited and JSON files (e.g. `"latin-1"`, `"utf-16"`); default is a UTF-8/16/32 BOM if present, else UTF-8 (CLI `--encoding`) |
+| `max_age` | `profile_dataset`, `compare_datasets`, `proxy_hints` | Age above which a numeric age is flagged as implausible instead of banded into `75+`, default 120 (CLI `--max-age`) |
+| `age_reference_year`, `keywords` | `profile_dataset`, `compare_datasets`, `proxy_hints` | Birth-year conversion and extra column-name vocabulary, same meaning as the CLI's `--age-reference-year` and `--keywords`; pass the values you profiled with to `proxy_hints` so it tests the same dimensions |
+| `proxy_hints` | `compare_datasets` | `true` attaches `proxy_hints_a` / `proxy_hints_b` to the comparison (CLI `compare --proxy-hints`) |
+| `held_out_with` | `proxy_hints` | `"PATH=COLUMN"` specs (optionally `:KEY`, a `~`/`!` key marker and `@ENCODING`) for columns already dropped; near-unique ones are skipped with a note (CLI `--proxy-hints-with`) |
+| `key_normalize` | `compare_datasets`, `proxy_hints` | Match join keys ignoring case, spaces, leading zeros, full-width characters and `42.0` (CLI `--proxy-key-normalize`) |
+| `exact` | `compare_datasets`, `proxy_hints` | Fisher/permutation p-values for small-cell hints, adds `p_method` (CLI `--proxy-exact`) |
+| `exact_permutations` / `exact_max_rows` | `compare_datasets`, `proxy_hints` | Shuffle count (at most 1,000,000, default 1000) and row cap (default 20000) for `exact` (CLI `--proxy-exact-permutations` / `--proxy-exact-max-rows`) |
+| `max_categorical_card` / `max_dimension_groups` | `profile_dataset`, `compare_datasets`, `proxy_hints` | Caps on categorical cardinality (default 20) and groups per dimension (default 50) (CLI `--max-categorical-card` / `--max-dimension-groups`) |
+| `renames` | `compare_datasets` | `{"race": "ethnicity"}` compares a renamed dimension as one (CLI `--rename`) |
 
 The engine is domain-agnostic - it works on any tabular CSV (health, hiring, lending, justice),
 auto-detecting demographic columns (sex, race, age, geography) by name. Beyond the single-dataset
@@ -1242,9 +1298,9 @@ The full public roadmap - with phases, completion status, and content schedule -
 
 | Metric | Count |
 |--------|------:|
-| GitHub Stars | 49 |
-| External Contributors | 46 |
-| Forks | 51 |
+| GitHub Stars | 51 |
+| External Contributors | 52 |
+| Forks | 57 |
 | Watching | 8 |
 | Combined Social Reach (Instagram + LinkedIn) | 30K+ |
 | Countries Reached (Website Visitors) | 20 |

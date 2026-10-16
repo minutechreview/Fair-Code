@@ -10,7 +10,18 @@
 
   var DISPLAY_GROUPS = 12; // mirror faircode/report.py
   var E = window.FairCodeProfiler;
-  var FAIRCODE_VERSION = '2.3.0';
+  var S = window.FairCodeShared;   // helpers shared with the other view (#983)
+  var FAIRCODE_VERSION = S.VERSION;
+  var KEYWORDS_EVENT = S.KEYWORDS_EVENT;
+  var readStoredKeywords = S.readStoredKeywords, writeStoredKeywords = S.writeStoredKeywords;
+  var setKeywordsError = S.setKeywordsError, checkKeywordsText = S.checkKeywordsText;
+  var showRestoredNote = S.showRestoredNote, announceKeywords = S.announceKeywords;
+  var fileDigest = S.fileDigest, heldOutEntries = S.heldOutEntries, setSkipNotes = S.setSkipNotes;
+  var flashButton = S.flashButton, fallbackCopy = S.fallbackCopy;
+  var esc = S.esc, pct = S.pct, prefersReducedMotion = S.prefersReducedMotion, readProxyAlpha = S.readProxyAlpha;
+  var exact = S.createExactInputs('proxy');
+  var exactControls = exact.controls, clearExactError = exact.clearError, showExactError = exact.showError;
+  var syncExactInputs = exact.sync, wireExactInputs = exact.wire;
 
   var dropzone = document.getElementById('dropzone');
   var fileInput = document.getElementById('fileInput');
@@ -20,6 +31,7 @@
   var results = document.getElementById('results');
   var downloadHtmlBtn = document.getElementById('downloadHtmlBtn');
   var copyJsonBtn = document.getElementById('copyJsonBtn');
+  var copyCliBtn = document.getElementById('copyCliBtn');
   var downloadCsvBtn = document.getElementById('downloadCsvBtn');
   var announcer = document.getElementById('resultsAnnouncer');
   var mappingBlock = document.getElementById('mappingBlock');
@@ -34,7 +46,8 @@
   var referenceStatus = document.getElementById('referenceStatus');
   var proxyHintsBtn = document.getElementById('proxyHintsBtn');
   var heldOutControl = window.FairCodeHeldOut.init(
-    document.getElementById('heldOutRows'), document.getElementById('heldOutAddBtn'), 'held-out');
+    document.getElementById('heldOutRows'), document.getElementById('heldOutAddBtn'), 'held-out',
+    function () { var sel = document.getElementById('encodingSelect'); return sel ? sel.value : 'auto'; });
   var thresholdControls = document.getElementById('thresholdControls');
   var thresholdInputs = thresholdControls ?
     Array.prototype.slice.call(thresholdControls.querySelectorAll('[data-opt]')) : [];
@@ -42,11 +55,20 @@
   // hardcoded copy in profiler.html that could silently drift from them.
   thresholdInputs.forEach(function (input) {
     var def = E.DEFAULT_OPTS && E.DEFAULT_OPTS[input.dataset.opt];
-    if (def !== undefined) input.placeholder = String(def);
+    if (def !== undefined && def !== null) input.placeholder = String(def);
   });
 
   var currentResult = null;
   var currentFile = null;
+  var currentEncoding = null;  // encoding the current file was decoded with (provenance, #857)
+  var pendingEncoding = null;
+  var referenceFile = null;    // the reference baseline File in use, re-read when the picker changes (#900)
+  var pendingReferenceFile = null;
+  var currentSheet = null;     // {sheet, sheets_ignored} of the current .xlsx file (provenance, #899)
+  var pendingSheet = null;
+  var encodingSelect = document.getElementById('encodingSelect');
+  var currentProxySettings = null; // alpha/correction/exact behind the on-screen hints (#898)
+  var currentHeldSpecs = []; // held-out specs behind the on-screen proxy hints (#811)
   var currentName = '';
   var currentTable = null;   // parsed table, kept so overrides can re-profile
   var currentOverrides = {}; // column -> forced kind (issue #62)
@@ -115,6 +137,7 @@
   });
   downloadHtmlBtn.addEventListener('click', downloadHtmlReport);
   copyJsonBtn.addEventListener('click', copyResultAsJSON);
+  if (copyCliBtn) copyCliBtn.addEventListener('click', copyCliCommand);
   downloadCsvBtn.addEventListener('click', downloadCsvReport);
   proxyHintsBtn.addEventListener('click', renderProxyHints);
 
@@ -133,6 +156,7 @@
         try {
           var result = await E.parseXLSX(reader.result);
 
+          pendingSheet = { sheet: result.sheetName, sheets_ignored: result.ignoredSheets.length };
           runTable(result.table, file.name, file);
 
           if (result.ignoredSheets.length > 0) {
@@ -147,9 +171,31 @@
       };
       reader.readAsArrayBuffer(file);
     } else {
-      reader.onload = function () { runText(String(reader.result), file.name, file); };
-      reader.readAsText(file);
+      reader.onload = function () {
+        try {
+          var decoded = E.decodeText(reader.result, encodingSelect ? encodingSelect.value : 'auto');
+          pendingEncoding = decoded.encoding;
+          runText(decoded.text, file.name, file);
+        } catch (err) {
+          showError('Could not decode that file: ' + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
     }
+  }
+
+  // Re-read the current file when the encoding changes (#857).
+  if (encodingSelect) {
+    encodingSelect.addEventListener('change', function () {
+      // Re-reading the dataset resets the reference (new schema), so hand the reference file
+      // over to be re-applied once the dataset is back (#900).
+      if (currentFile && !/\.xlsx$/i.test(currentFile.name)) {
+        pendingReferenceFile = referenceFile;
+        readFile(currentFile);
+      } else if (referenceFile) {
+        loadReferenceFile(referenceFile);
+      }
+    });
   }
 
   function runText(text, name, file) {
@@ -160,6 +206,14 @@
         var table = E.parseCSV(text);
       }
       runTable(table, name, file);
+      // FileReader.readAsText decodes as UTF-8; a latin-1/UTF-16 export comes
+      // through with U+FFFD replacement characters, so say so (#843).
+      if (text.indexOf('\uFFFD') !== -1 && (!encodingSelect || encodingSelect.value === 'auto' || encodingSelect.value === 'utf-8')) {
+        fileStatus.textContent =
+          'Some characters could not be decoded as UTF-8 and were replaced - ' +
+          'the file may use another encoding (e.g. latin-1). Re-save it as UTF-8 for exact group labels.';
+        fileStatus.hidden = false;
+      }
     } catch (err) {
       showError('Could not profile that file: ' + err.message);
     }
@@ -172,12 +226,18 @@
   // can't go stale when a later run comes from a non-file path.
   function runTable(table, name, file) {
     currentFile = file || null;
+    currentEncoding = file ? pendingEncoding : null;
+    pendingEncoding = null;
+    currentSheet = file ? pendingSheet : null;
+    pendingSheet = null;
     if (!table.columns.length || !table.rows.length) {
       return showError('That file looks empty or has no data rows.');
     }
     currentTable = table;
     currentOverrides = {};
     currentOpts = {};
+    var reapply = pendingReferenceFile;   // set by the encoding picker only (#900)
+    pendingReferenceFile = null;
     resetReference();
     resetThresholdInputs();
     var result = E.profile(table);
@@ -186,6 +246,7 @@
     errorEl.hidden = true;
     render(result, name, true);
     renderMapping(table.columns);
+    if (reapply) loadReferenceFile(reapply);
   }
 
   // Re-run the engine with the current overrides + opts and re-render in
@@ -206,12 +267,14 @@
   }
 
   function resetReference() {
+    referenceFile = null;
     referenceStatus.textContent = '';
     referenceClearBtn.hidden = true;
     referenceInput.value = '';
   }
 
   function showError(msg) {
+    pendingReferenceFile = null;
     errorEl.textContent = msg;
     errorEl.hidden = false;
     results.hidden = true;
@@ -221,16 +284,8 @@
   var GRADE_COLOR = { A: 'var(--accent3)', B: 'var(--accent3)',
                       C: 'var(--warn)', D: 'var(--accent)', F: 'var(--accent)' };
 
-  function prefersReducedMotion() {
-    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  }
-
-  function pct(x) { return (x * 100).toFixed(1) + '%'; }
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
+  // A dimension with no groups was not measured; its stored 0 is a placeholder (#838).
+  function dimScoreText(d) { return d.n_groups === 0 ? 'not measured' : d.dimension_score + '/100'; }
 
   function render(r, name, scroll) {
     currentResult = r;
@@ -282,8 +337,10 @@
     var proxyResults = document.getElementById('proxyHintsResults');
     proxyResults.innerHTML = '';
     proxyBlock.hidden = r.dimensions.length < 2;
+    if (heldOutControl && heldOutControl.reset) heldOutControl.reset();
 
     results.hidden = false;
+
     if (scroll) {
       results.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
     }
@@ -301,7 +358,7 @@
 
     var head = '<div class="dim-head"><div><span class="dim-name">' + esc(d.name) +
       '</span><span class="dim-kind">' + esc(d.kind) + '</span></div>' +
-      '<span class="dim-score">' + d.dimension_score + '/100</span></div>';
+      '<span class="dim-score">' + dimScoreText(d) + '</span></div>';
 
     var maxShare = d.groups.length ? d.groups[0].share : 1;
     function barRow(g) {
@@ -408,18 +465,6 @@
   // Opt-in: computed on click, not on every render, since the chi-squared
   // pass over every dimension pair is work most visits never ask for.
 
-  // Significance level for the proxy check (--proxy-alpha, #786): blank means
-  // the 0.05 default; anything outside (0, 1] is rejected like the CLI does.
-  function readProxyAlpha(input, host) {
-    var raw = input.value.trim();
-    if (raw === '') return 0.05;
-    var a = parseFloat(raw);
-    if (!(a > 0 && a <= 1)) {
-      host.innerHTML = '<p class="profiler-error">Significance level must be in (0, 1].</p>';
-      return null;
-    }
-    return a;
-  }
 
   async function renderProxyHints() {
     if (!currentTable || !currentResult) return;
@@ -428,21 +473,41 @@
     var alpha = readProxyAlpha(document.getElementById('proxyAlphaInput'), host);
     if (alpha === null) return;
     // Optional held-out columns (#781, #801, #802), mirroring --proxy-hints-with.
-    var heldOut = null;
+    var heldOut = null, heldNotes = [];
     try {
       var specs = await heldOutControl.collect();
-      if (specs.length) heldOut = await E.buildHeldOut(specs, currentTable);
+      if (specs.length) heldOut = await E.buildHeldOut(specs, currentTable, heldNotes, currentOpts.max_categorical_card);
+      currentHeldSpecs = specs;
     } catch (err) {
+      currentHeldSpecs = [];
       host.innerHTML = '<p class="profiler-error">' + esc(err.message) + '</p>';
       return;
     }
+    var exactSettings = {};
+    try {
+      // Only read when the exact box is ticked (the inputs are disabled otherwise); a bad value is reported on the
+      // input itself, not in the results area (#962).
+      if (exactControls().box.checked) {
+        exactSettings = E.parseExactSettings(exactControls().perm.value, exactControls().rows.value);
+      }
+      clearExactError();
+    } catch (err) {
+      showExactError(err.message);
+      return;
+    }
     var hints = E.proxyHints(currentTable, currentResult.dimensions, alpha, heldOut,
-      document.getElementById('proxyCorrectionInput').value || null);
+      document.getElementById('proxyCorrectionInput').value || null, currentOpts.max_age, currentOpts.age_reference_year,
+      document.getElementById('proxyExactInput').checked, exactSettings.permutations, exactSettings.maxRows);
     // Attach to the result so Download report / Copy as JSON / Download CSV
     // include what's on screen (issue #758).
     currentResult.proxy_hints = hints;
+    setSkipNotes(currentResult, specs);
+    currentProxySettings = { alpha: alpha, correction: document.getElementById('proxyCorrectionInput').value || null,
+                             exact: document.getElementById('proxyExactInput').checked,
+                             permutations: exactSettings.permutations, maxRows: exactSettings.maxRows };
     if (!hints.length) {
       host.innerHTML = '<p class="section-note">No column pairs are significantly associated (p &lt; ' + alpha + ').</p>';
+      appendHeldNotes(host, heldNotes);
       return;
     }
     var list = document.createElement('div');
@@ -453,10 +518,22 @@
       row.innerHTML = '<span class="proxy-hint-pair">' + esc(h.a) + ' × ' + esc(h.b) + '</span>' +
         '<span class="proxy-hint-stats">p ' + h.p_value.toExponential(2) +
         ' · Cramer’s V ' + h.cramers_v.toFixed(4) +
-        (h.p_adjusted !== undefined ? ' · adj p ' + h.p_adjusted.toExponential(2) : '') + '</span>';
+        (h.p_adjusted !== undefined ? ' · adj p ' + h.p_adjusted.toExponential(2) + E.proxyFamily(h) : '') +
+        (h.low_expected ? ' · small cells ⚠' : '') + '</span>';
       list.appendChild(row);
     });
     host.appendChild(list);
+    appendHeldNotes(host, heldNotes);
+  }
+
+  // Ignored-sheet notes for held-out .xlsx files (#816).
+  function appendHeldNotes(host, notes) {
+    notes.forEach(function (note) {
+      var p = document.createElement('p');
+      p.className = 'section-note';
+      p.textContent = note;
+      host.appendChild(p);
+    });
   }
 
   // ── Column mapping (manual override, issue #62) ─────────────────────────
@@ -489,21 +566,7 @@
     mappingBlock.hidden = false;
   }
 
-  function readOverrides() {
-    var overrides = {};
-    var selects = mappingList.querySelectorAll('.map-select');
-    for (var i = 0; i < selects.length; i++) {
-      var sel = selects[i];
-      var row = sel.closest('.map-row');
-      if (sel.value !== 'auto') {
-        overrides[sel.getAttribute('data-col')] = sel.value;
-        if (row) row.classList.add('overridden');
-      } else if (row) {
-        row.classList.remove('overridden');
-      }
-    }
-    return overrides;
-  }
+  function readOverrides() { return S.readOverrides(mappingList); }
 
   // Delegated so it keeps working across re-renders of the list.
   mappingList.addEventListener('change', function (e) {
@@ -565,11 +628,24 @@
   // the same name (faircode/SPEC.md section 7). Left blank, each falls back
   // to the engine's own default via resolveOpts() the same way an unset
   // CLI flag falls back to profiler.py's module constant.
+
   function resetThresholdInputs() {
     thresholdInputs.forEach(function (input) {
       input.value = '';
       input.classList.remove('overridden');
     });
+    if (thresholdControls) {
+      // The keywords box is not a per-file tweak: it is refilled from storage and
+      // re-applied to the fresh currentOpts instead of being cleared (#888).
+      Array.prototype.forEach.call(thresholdControls.querySelectorAll('[data-opt-json]'), function (area) {
+        var checked = checkKeywordsText(readStoredKeywords().trim());
+        area.value = checked.value !== undefined ? readStoredKeywords() : '';
+        area.classList.toggle('overridden', checked.value !== undefined);
+        setKeywordsError(area, '');
+        if (checked.value !== undefined) currentOpts[area.dataset.optJson] = checked.value;
+        showRestoredNote(area, checked.value !== undefined);   // say where the filled box came from (#930)
+      });
+    }
   }
 
   thresholdInputs.forEach(function (input) {
@@ -606,6 +682,73 @@
     });
   });
 
+
+  // Extra detection vocabulary (--keywords, #856): a JSON textarea. Invalid JSON is
+  // flagged and ignored; a vocabulary the engine rejects is reverted like a bad threshold.
+  Array.prototype.slice.call(
+    thresholdControls ? thresholdControls.querySelectorAll('[data-opt-json]') : []
+  ).forEach(function (area) {
+    area.addEventListener('input', function () {
+      var opt = area.dataset.optJson;
+      showRestoredNote(area, false);   // an edit makes it the person's own text
+      var checked = checkKeywordsText(area.value.trim());
+      if (checked.error) { setKeywordsError(area, checked.error); return; }
+      var hadPrevious = Object.prototype.hasOwnProperty.call(currentOpts, opt);
+      var previous = currentOpts[opt];
+      setKeywordsError(area, '');
+      if (checked.empty) {
+        delete currentOpts[opt];
+        area.classList.remove('overridden');
+      } else {
+        currentOpts[opt] = checked.value;
+        area.classList.add('overridden');
+      }
+      if (!reprofile(false)) {
+        if (hadPrevious) currentOpts[opt] = previous; else delete currentOpts[opt];
+        setKeywordsError(area, 'That vocabulary could not be applied.');
+        area.classList.toggle('overridden', hadPrevious);
+        reprofile(false);
+        return;
+      }
+      writeStoredKeywords(checked.empty ? '' : area.value);
+      announceKeywords(area);
+    });
+  });
+
+  document.addEventListener(KEYWORDS_EVENT, function (ev) {
+    if (!thresholdControls) return;
+    Array.prototype.forEach.call(thresholdControls.querySelectorAll('[data-opt-json]'), function (area) {
+      if (ev.detail && ev.detail.source === area.id) return;
+      var text = readStoredKeywords(), checked = checkKeywordsText(text.trim());
+      if (checked.error) return;
+      area.value = checked.empty ? '' : text;
+      area.classList.toggle('overridden', !checked.empty);
+      setKeywordsError(area, '');
+      showRestoredNote(area, false);
+      if (checked.empty) delete currentOpts[area.dataset.optJson]; else currentOpts[area.dataset.optJson] = checked.value;
+      reprofile(false);
+    });
+  });
+
+  // Forget: empty the box, the stored text and the applied vocabulary, and tell the other view.
+  Array.prototype.forEach.call(thresholdControls ? thresholdControls.querySelectorAll('[data-opt-json]') : [], function (area) {
+    var forget = document.getElementById(area.id.replace('Input', 'Forget'));
+    if (!forget) return;
+    forget.addEventListener('click', function () {
+      area.value = '';
+      area.classList.remove('overridden');
+      setKeywordsError(area, '');
+      delete currentOpts[area.dataset.optJson];
+      writeStoredKeywords('');
+      showRestoredNote(area, false);
+      announceKeywords(area);
+      reprofile(false);
+    });
+  });
+
+  // Page load: bring back the remembered vocabulary (#888).
+  resetThresholdInputs();
+
   // ── Reference baseline (issue #56) ──────────────────────────────────────
   referenceBtn.addEventListener('click', function () { referenceInput.click(); });
   referenceInput.addEventListener('change', function (e) {
@@ -614,6 +757,13 @@
     referenceBtn.focus();
     var f = e.target.files && e.target.files[0];
     if (!f) return;
+    loadReferenceFile(f);
+  });
+
+  // Reads, decodes (picker) and applies a reference baseline file. Kept as a function so the
+  // encoding picker can re-apply the same file (#900).
+  function loadReferenceFile(f) {
+    referenceFile = f;
     var reader = new FileReader();
     reader.onerror = function () { showError('Could not read the reference file.'); };
     function applyReferenceTable(table, sheetInfo) {
@@ -662,7 +812,9 @@
     } else {
       reader.onload = function () {
         try {
-          var text = String(reader.result);
+          // Same decoding as the dataset (picker choice, else a sniffed BOM, else UTF-8), so a
+          // latin-1 census file's labels match the dataset's groups (#890).
+          var text = E.decodeText(reader.result, encodingSelect ? encodingSelect.value : 'auto').text;
           var table = (/\.json$/i.test(f.name) || f.type === 'application/json')
             ? E.parseJSON(text) : E.parseCSV(text);
           applyReferenceTable(table);
@@ -670,9 +822,9 @@
           showError('Could not read reference baseline: ' + err.message);
         }
       };
-      reader.readAsText(f);
+      reader.readAsArrayBuffer(f);
     }
-  });
+  }
   referenceClearBtn.addEventListener('click', function () {
     delete currentOpts.reference;
     resetReference();
@@ -680,33 +832,6 @@
   });
 
   // ── Report export: "Download report (HTML)" / "Copy as JSON" ────────────
-  async function fileDigest(file) {
-    if (!file) {
-      return {
-        digest: null,
-        note: 'dataset was generated in memory; raw bytes were not retained'
-      };
-    }
-
-    try {
-      var buffer = await file.arrayBuffer();
-      var hash = await crypto.subtle.digest('SHA-256', buffer);
-      var bytes = new Uint8Array(hash);
-      var hex = Array.prototype.map.call(bytes, function (b) {
-        return b.toString(16).padStart(2, '0');
-      }).join('');
-
-      return {
-        digest: 'sha256:' + hex,
-        note: null
-      };
-    } catch (err) {
-      return {
-        digest: null,
-        note: 'could not read file for hashing: ' + err.message
-      };
-    }
-  }
   // Ports faircode/report.py's to_html so the browser report matches the
   // CLI's --html output (same palette, same layout).
   function buildHtmlReport(r) {
@@ -716,7 +841,7 @@
         '(chi-squared association, informational)</span></h2><ul>' +
         r.proxy_hints.map(function (h) {
           return '<li>' + esc(h.a) + ' ↔ ' + esc(h.b) + ' (χ² p=' + h.p_value.toPrecision(4) +
-            ', Cramér’s V=' + h.cramers_v.toFixed(2) + (h.p_adjusted !== undefined ? ', adj p=' + h.p_adjusted.toPrecision(4) : '') + ')</li>';
+            ', Cramér’s V=' + h.cramers_v.toFixed(2) + (h.p_adjusted !== undefined ? ', adj p=' + h.p_adjusted.toPrecision(4) : '') + E.proxyFamily(h) + E.proxyNotes(h) + ')</li>';
         }).join('') + '</ul></section>';
     }
     var dimBlocks = r.dimensions.map(function (d) {
@@ -762,7 +887,7 @@
 
       return '<section class="dim"><h2>' + esc(d.name) +
         ' <span class="kind">' + esc(d.kind) + '</span> ' +
-        '<span class="score">' + d.dimension_score + '/100</span>' + metaHtml + '</h2>' +
+        '<span class="score">' + dimScoreText(d) + '</span>' + metaHtml + '</h2>' +
         '<table>' + rows + '</table>' + moreHtml + referenceHtml + '</section>';
     }).join('');
 
@@ -847,9 +972,10 @@
     }
     if (r.proxy_hints && r.proxy_hints.length) {
       var adj = r.proxy_hints.some(function (h) { return h.p_adjusted !== undefined; });
-      out += csvRow([]) + csvRow(['proxy_hint_a', 'proxy_hint_b', 'p_value', 'cramers_v'].concat(adj ? ['p_adjusted'] : []));
+      var meth = r.proxy_hints.some(function (h) { return h.p_method !== undefined; });
+      out += csvRow([]) + csvRow(['proxy_hint_a', 'proxy_hint_b', 'p_value', 'cramers_v'].concat(adj ? ['p_adjusted'] : [], meth ? ['p_method'] : [], ['n_tests', 'low_expected']));
       r.proxy_hints.forEach(function (h) {
-        out += csvRow([h.a, h.b, h.p_value, h.cramers_v].concat(adj ? [h.p_adjusted] : []));
+        out += csvRow([h.a, h.b, h.p_value, h.cramers_v].concat(adj ? [h.p_adjusted] : [], meth ? [h.p_method] : [], [h.n_tests, !!h.low_expected]));
       });
     }
     if (provenance) out += csvRow([]) + E.provenanceCsv(provenance);
@@ -888,40 +1014,58 @@
     URL.revokeObjectURL(url);
   }
 
-  function flashButton(btn, msg) {
-    var original = btn.textContent;
-    btn.textContent = msg;
-    btn.disabled = true;
-    setTimeout(function () {
-      btn.textContent = original;
-      btn.disabled = false;
-    }, 1500);
-  }
 
-  function fallbackCopy(text) {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
-    document.body.removeChild(ta);
-    return ok;
-  }
 
   async function buildProvenance() {
     var hash = await fileDigest(currentFile);
-    var provenance = {
-      faircode_version: FAIRCODE_VERSION,
-      engine: 'js',
-      dataset_hash: hash.digest,
-      params: E.publicParams(currentOpts),
-      overrides: Object.assign({}, currentOverrides)
-    };
+    // Key order matches faircode/provenance.py: the digest, its note, then the encoding.
+    var provenance = { faircode_version: FAIRCODE_VERSION, engine: 'js', dataset_hash: hash.digest };
     if (hash.note !== null) provenance.dataset_hash_note = hash.note;
+    if (currentEncoding) provenance.encoding = currentEncoding;
+    if (currentSheet) Object.assign(provenance, currentSheet);
+    provenance.params = E.publicParams(currentOpts, currentResult && currentResult.proxy_hints ? currentProxySettings : null);
+    provenance.overrides = Object.assign({}, currentOverrides);
+    if (currentResult && currentResult.proxy_hints && currentHeldSpecs.length) {
+      provenance.proxy_hints_with = await heldOutEntries(currentHeldSpecs);
+    }
     return provenance;
+  }
+
+  // The faircode command that reproduces this run (#915); shell-quoted by E.buildCliCommand.
+  // "include provenance" only matters to a CSV, so ticking it copies a --csv ... --csv-provenance command (#929).
+  function cliOutputs(withProvenance, base, what) {
+    if (!withProvenance) return {};
+    return { csv: String(base).replace(/\.[^.\/]+$/, '') + '-' + what + '.csv', csvProvenance: true };
+  }
+
+  function currentCliCommand() {
+    var withHints = !!(currentResult && currentResult.proxy_hints && currentProxySettings);
+    return E.buildCliCommand({
+      kind: 'profile',
+      sample: !currentFile && currentName === 'sample-health-data.csv',   // the built-in sample = --sample (#928)
+      files: [currentFile ? currentFile.name : 'data.csv'],
+      opts: currentOpts,
+      overrides: currentOverrides,
+      encoding: encodingSelect ? encodingSelect.value : 'auto',
+      referenceName: referenceFile ? referenceFile.name : null,
+      outputs: cliOutputs(document.getElementById('csvProvenanceInput').checked, currentFile ? currentFile.name : 'sample', 'profile'),
+      proxy: withHints ? currentProxySettings : null,
+      held: { main: withHints ? currentHeldSpecs : [] }
+    });
+  }
+
+  function copyCliCommand() {
+    if (!currentResult) return;
+    var text = currentCliCommand();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        flashButton(copyCliBtn, '✓ Copied');
+      }, function () {
+        flashButton(copyCliBtn, fallbackCopy(text) ? '✓ Copied' : 'Copy failed');
+      });
+    } else {
+      flashButton(copyCliBtn, fallbackCopy(text) ? '✓ Copied' : 'Copy failed');
+    }
   }
 
   async function copyResultAsJSON() {
@@ -953,4 +1097,5 @@
   if (demoMode !== null && demoMode !== 'compare') {
     runText(buildSampleCSV(), 'sample-health-data.csv');
   }
+  wireExactInputs();
 })();

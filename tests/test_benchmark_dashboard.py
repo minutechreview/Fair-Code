@@ -75,7 +75,7 @@ function makeEl(id) {
 var ids = ['loadBundledBtn', 'benchDropzone', 'benchFileInput', 'benchError', 'benchStatus',
   'benchResults', 'benchFilters', 'significantOnlyInput', 'benchSummary', 'benchTable',
   'benchChart', 'benchChartNote', 'benchChartBlock', 'benchExportBtn', 'benchResetBtn',
-  'benchClearBtn', 'benchLegend', 'benchChartButtons', 'benchChartSvgBtn',
+  'benchClearBtn', 'benchLegend', 'benchKey', 'benchKeySigText', 'benchChartButtons', 'benchChartSvgBtn',
   'benchChartPngBtn', 'benchFigureBlock', 'benchFigureImg'];
 var elements = {};
 ids.forEach(function (id) { elements[id] = makeEl(id); });
@@ -108,6 +108,29 @@ global.document = {
         set: function (v) { node._value = v; },
       });
     }
+    if (tag === 'canvas') {
+      var ctx = {
+        _calls: [],
+        scale: function (sx, sy) { ctx._calls.push(['scale', sx, sy]); },
+        drawImage: function (img, x, y) { ctx._calls.push(['drawImage', img, x, y]); },
+      };
+      node.getContext = function (kind) {
+        node._contextKind = kind;
+        return ctx;
+      };
+      node.toBlob = function (cb, mimeType) {
+        node._toBlobMimeType = mimeType;
+        var b = new global.Blob(['fake-png-bytes'], { type: mimeType });
+        cb(b);
+      };
+      node._ctx = ctx;
+      global.__lastCanvas = node;
+    }
+    if (tag === 'a') {
+      node.click = function () {
+        global.__lastDownloadName = node.download;
+      };
+    }
     return node;
   },
 };
@@ -121,16 +144,58 @@ function makeTabButton(tab, selected) {
 global.__tabButtons = [makeTabButton('fairness', true), makeTabButton('performance', false),
   makeTabButton('summary', false)];
 
+var _origToLocaleString = Number.prototype.toLocaleString;
+Number.prototype.toLocaleString = function (locales, options) {
+  return _origToLocaleString.call(this, locales || 'en-US', options);
+};
+
 var fetchMap = {
   'results/results_fairness.csv': fs.readFileSync(path.join(REPO, 'results', 'results_fairness.csv'), 'utf-8'),
   'results/results_performance.csv': fs.readFileSync(path.join(REPO, 'results', 'results_performance.csv'), 'utf-8'),
   'results/summary.csv': fs.readFileSync(path.join(REPO, 'results', 'summary.csv'), 'utf-8'),
 };
+var blockUrl = process.argv[3] || '';
 global.fetch = function (url) {
+  if (blockUrl && url.indexOf(blockUrl) !== -1) {
+    return Promise.resolve({
+      ok: false,
+      status: 404,
+      text: function () { return Promise.reject(new Error('HTTP 404')); }
+    });
+  }
   return Promise.resolve({ ok: true, text: function () { return Promise.resolve(fetchMap[url]); } });
 };
 var lastBlob = null;
-global.Blob = function (parts) { lastBlob = parts.join(''); };
+var lastBlobType = null;
+global.Blob = function (parts, opts) {
+  lastBlob = parts.join('');
+  lastBlobType = (opts && opts.type) || null;
+};
+global.Image = function () {
+  var self = {
+    width: 0,
+    height: 0,
+    _src: '',
+    onload: null,
+  };
+  Object.defineProperty(self, 'src', {
+    get: function () { return self._src; },
+    set: function (v) {
+      self._src = v;
+      try {
+        var decoded = decodeURIComponent(v.split(',')[1] || '');
+        var wm = decoded.match(/width="(\d+)"/);
+        var hm = decoded.match(/height="(\d+)"/);
+        if (wm) self.width = parseInt(wm[1], 10);
+        if (hm) self.height = parseInt(hm[1], 10);
+      } catch (e) {}
+      if (typeof self.onload === 'function') {
+        self.onload();
+      }
+    },
+  });
+  return self;
+};
 global.URL = { createObjectURL: function () { return 'blob:x'; }, revokeObjectURL: function () {} };
 global.document.body = { appendChild: function () {}, removeChild: function () {} };
 global.window = global;
@@ -150,6 +215,116 @@ var results = {};
   results.last_url_after_first_render = global.__lastUrl;
   results.results_hidden_after_load = elements.benchResults.hidden;
   results.summary_unfiltered = elements.benchSummary.textContent;
+  results.status_after_load = elements.benchStatus.textContent;
+  results.error_after_load = elements.benchError.textContent;
+  results.error_hidden_after_load = elements.benchError.hidden;
+
+  if (process.argv[4] === 'sig-per-tab') {
+    // #864: the toggle is per tab - fairness and summary never share it.
+    function toggle(on) {
+      elements.significantOnlyInput.checked = on;
+      (elements.significantOnlyInput._listeners.change || []).forEach(function (f) { f(); });
+    }
+    toggle(true);                                   // fairness: on
+    results.fairness_on = elements.benchSummary.textContent;
+    global.__tabButtons[2].click();                 // -> summary
+    results.summary_checked = !!elements.significantOnlyInput.checked;
+    results.summary_text = elements.benchSummary.textContent;
+    results.summary_url = global.__lastUrl;
+    toggle(true);                                   // summary: on
+    global.__tabButtons[0].click();                 // -> fairness again
+    results.fairness_checked_again = !!elements.significantOnlyInput.checked;
+    results.fairness_text_again = elements.benchSummary.textContent;
+    toggle(false);                                  // fairness: off
+    global.__tabButtons[2].click();
+    results.summary_still_checked = !!elements.significantOnlyInput.checked;
+    process.stdout.write(JSON.stringify(results));
+    return;
+  }
+
+  if (process.argv[4] === 'summary-key') {
+    // #905: the Summary tab's key says significant in every model; fairness keeps "gap".
+    function pick2(field, value) {
+      var sel = createdSelects[field];
+      sel.value = value;
+      (sel._listeners.change || []).forEach(function (f) { f(); });
+    }
+    pick2('metric', 'demographic_parity_diff');
+    pick2('protected_attribute', 'race');
+    results.fairness_key = elements.benchKeySigText.textContent;
+    global.__tabButtons[2].click();
+    pick2('metric', 'demographic_parity_diff');
+    pick2('protected_attribute', 'race');
+    results.summary_key = elements.benchKeySigText.textContent;
+    lastBlob = null;
+    elements.benchChartSvgBtn.click();
+    results.summary_svg = lastBlob;
+    process.stdout.write(JSON.stringify(results));
+    return;
+  }
+
+  if (process.argv[4] === 'chart-url') {
+    // #893: the Export colours choice is restored from ?chart= and written back on change.
+    results.restored_theme = elements.benchChartThemeSelect.value;
+    function choose(v) {
+      elements.benchChartThemeSelect.value = v;
+      (elements.benchChartThemeSelect._listeners.change || []).forEach(function (f) { f(); });
+      return global.__lastUrl;
+    }
+    results.url_colorblind = choose('colorblind');
+    results.url_page = choose('page');
+    process.stdout.write(JSON.stringify(results));
+    return;
+  }
+
+  if (process.argv[4] === 'chart-theme') {
+    // #813: render the same chart under each export theme and read the SVG back.
+    function pick(field, value) {
+      var sel = createdSelects[field];
+      sel.value = value;
+      (sel._listeners.change || []).forEach(function (f) { f(); });
+    }
+    pick('metric', 'demographic_parity_diff');
+    pick('protected_attribute', 'race');
+    results.themes = {};
+    ['page', 'light', 'dark', 'transparent', 'colorblind'].forEach(function (theme) {
+      elements.benchChartThemeSelect.value = theme;
+      lastBlob = null;
+      elements.benchChartSvgBtn.click();
+      results.themes[theme] = lastBlob;
+    });
+    // a page whose resolved CSS variables are dark: 'page' must follow them
+    global.getComputedStyle = function () {
+      var vars = { '--bg': ' #15130d ', '--text': '#cfc7b0', '--muted': '#8d8367',
+        '--bias-track-bg': '#242013', '--border2': '#443e2d', '--accent': '#cf6f49', '--accent3': '#79b294' };
+      return { getPropertyValue: function (n) { return vars[n] || ''; } };
+    };
+    global.document.documentElement = {};
+    elements.benchChartThemeSelect.value = 'page';
+    lastBlob = null;
+    elements.benchChartSvgBtn.click();
+    results.themes.page_dark_vars = lastBlob;
+    process.stdout.write(JSON.stringify(results));
+    return;
+  }
+
+  if (process.argv[4] === 'load-only') {
+    // Read back the significance toggle's state on whichever tab the URL opened (#819).
+    results.sig_parent_hidden = elements.significantOnlyInput.parentElement.hidden;
+    results.sig_checked = !!elements.significantOnlyInput.checked;
+    results.sig_label = elements.significantOnlyText.textContent;
+    elements.significantOnlyInput.checked = !elements.significantOnlyInput.checked;
+    (elements.significantOnlyInput._listeners.change || []).forEach(function (f) { f(); });
+    results.summary_after_toggle = elements.benchSummary.textContent;
+    results.url_after_toggle = global.__lastUrl;
+    process.stdout.write(JSON.stringify(results));
+    return;
+  }
+
+  if (elements.benchResults.hidden) {
+    process.stdout.write(JSON.stringify(results));
+    return;
+  }
 
   var auditSelect = createdSelects['audit'];
   results.audit_select_found = !!auditSelect;
@@ -200,9 +375,24 @@ var results = {};
     (sel._listeners.change || []).forEach(function (f) { f(); });
   });
   results.svg_button_visible = elements.benchChartButtons.hidden === false;
+  results.key_hidden_fairness = elements.benchKey.hidden;
   lastBlob = null;
   elements.benchChartSvgBtn.click();
   results.svg = lastBlob;
+
+  // #812: PNG chart export rasterises the SVG via canvas
+  global.__lastDownloadName = null;
+  global.__lastCanvas = null;
+  lastBlobType = null;
+  elements.benchChartPngBtn.click();
+  results.png_download_name = global.__lastDownloadName;
+  results.png_blob_type = lastBlobType;
+  results.canvas_context_kind = global.__lastCanvas ? global.__lastCanvas._contextKind : null;
+  results.canvas_to_blob_type = global.__lastCanvas ? global.__lastCanvas._toBlobMimeType : null;
+  results.canvas_width = global.__lastCanvas ? global.__lastCanvas.width : null;
+  results.canvas_height = global.__lastCanvas ? global.__lastCanvas.height : null;
+  results.canvas_calls = global.__lastCanvas && global.__lastCanvas._ctx ? global.__lastCanvas._ctx._calls : [];
+
   results.figure_hidden_without_audit = elements.benchFigureBlock.hidden;
   results.signed_chart = elements.benchChart.innerHTML.indexOf('bar-track signed') !== -1;
   results.neg_bars = (elements.benchChart.innerHTML.match(/bar-fill [a-z]+ neg/g) || []).length;
@@ -224,6 +414,10 @@ var results = {};
   (metricSelect._listeners.change || []).forEach(function (f) { f(); });
   results.perf_chart_bars = (elements.benchChart.innerHTML.match(/class="bar-row"/g) || []).length;
   results.perf_chart_hidden = elements.benchChart.hidden;
+  results.key_hidden_performance = elements.benchKey.hidden;
+  lastBlob = null;
+  elements.benchChartSvgBtn.click();
+  results.perf_svg = lastBlob;
   results.perf_chart_unsigned = elements.benchChart.innerHTML.indexOf('bar-track signed') === -1;
 
   // Summary tab (#794) and committed figure (#795).
@@ -252,9 +446,9 @@ var results = {};
 """
 
 
-def _run_dom_stub(search=""):
+def _run_dom_stub(search="", block_url="", mode=""):
     completed = subprocess.run(
-        ["node", "-e", _DOM_STUB, str(REPO_ROOT), search],
+        ["node", "-e", _DOM_STUB, str(REPO_ROOT), search, block_url, mode],
         capture_output=True, text=True, encoding="utf-8", check=True,
     )
     return json.loads(completed.stdout)
@@ -321,6 +515,16 @@ def test_benchmark_dashboard_loads_filters_sorts_and_switches_tabs():
     assert r["svg"].count("<rect x=") >= 1 and "demographic_parity_diff" in r["svg"]
     assert 'stroke="#bdb59c"' in r["svg"]  # signed metric -> centre line
     assert r["figure_hidden_without_audit"] is True
+
+    # #812: the chart also downloads as a 2x rasterised PNG blob via canvas.
+    assert r["png_download_name"] == "benchmark-fairness-chart.png"
+    assert r["png_blob_type"] == "image/png"
+    assert r["canvas_context_kind"] == "2d"
+    assert r["canvas_to_blob_type"] == "image/png"
+    assert r["canvas_width"] == 910 * 2
+    assert r["canvas_height"] > 0
+    assert ["scale", 2, 2] in r["canvas_calls"]
+    assert any(call[0] == "drawImage" for call in r["canvas_calls"])
 
     # #794: the roll-up summary tab lists summary.csv's rows with "k / n" model counts.
     summary = pd.read_csv(REPO_ROOT / "results" / "summary.csv")
@@ -417,3 +621,153 @@ def test_benchmark_dashboard_detect_kind_tells_the_three_result_files_apart():
     out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True,
                                     encoding="utf-8", check=True).stdout)
     assert out == ["fairness", "performance", "summary"]
+
+
+def test_benchmark_dashboard_bundled_load_partial_failure():
+    """#817: if one bundled CSV fails to load (e.g. 404), loadBundled still
+    loads whichever files succeeded and reports the failed ones in the status line,
+    rather than failing completely with the full error banner."""
+    fairness = pd.read_csv(REPO_ROOT / "results" / "results_fairness.csv")
+    total = len(fairness)
+    total_significant = int(fairness["significant"].sum())
+
+    # Simulate missing summary.csv (404)
+    r = _run_dom_stub(block_url="summary.csv")
+    assert r["results_hidden_after_load"] is False
+    assert r["error_hidden_after_load"] is True
+    assert "Could not load: results/summary.csv (HTTP 404)" in r["status_after_load"]
+    assert "results_fairness.csv" in r["status_after_load"]
+    assert "results_performance.csv" in r["status_after_load"]
+    assert r["summary_unfiltered"] == f"{total:,} of {total:,} rows shown · {total_significant:,} significant"
+
+    # Simulate all bundled files failing (e.g. offline / file:// block)
+    r_all_failed = _run_dom_stub(block_url="results")
+    assert r_all_failed["results_hidden_after_load"] is True
+    assert r_all_failed["error_hidden_after_load"] is False
+    assert "Could not fetch the bundled results/ CSVs" in r_all_failed["error_after_load"]
+
+
+
+def test_benchmark_dashboard_summary_tab_has_a_significance_filter():
+    """#819: the roll-up summary tab shows the significance toggle, filters on the
+    all-models-significant flag, and keeps it in the URL like the fairness tab."""
+    summary = pd.read_csv(REPO_ROOT / "results" / "summary.csv")
+    every_model = summary[(summary["n_models"] > 0)
+                          & (summary["n_models_significant"] == summary["n_models"])]
+    assert 0 < len(every_model) < len(summary), "fixture needs both kinds of summary row"
+
+    r = _run_dom_stub("?tab=summary", mode="load-only")
+    assert r["sig_parent_hidden"] is False  # visible on the summary tab now
+    assert r["sig_checked"] is False
+    assert "every model" in r["sig_label"]
+    assert r["summary_unfiltered"] == (
+        f"{len(summary):,} of {len(summary):,} rows shown"
+        f" · {len(every_model):,} significant in every model")
+    assert r["summary_after_toggle"] == (
+        f"{len(every_model):,} of {len(summary):,} rows shown"
+        f" · {len(every_model):,} significant in every model")
+    assert "tab=summary" in r["url_after_toggle"] and "sig=1" in r["url_after_toggle"]
+
+    restored = _run_dom_stub("?tab=summary&sig=1", mode="load-only")
+    assert restored["sig_checked"] is True
+    assert restored["summary_unfiltered"].startswith(f"{len(every_model):,} of {len(summary):,} rows shown")
+
+
+def test_benchmark_dashboard_chart_export_follows_the_chosen_colours():
+    """#813: the SVG/PNG export no longer hard-codes the light tokens - it follows the
+    page's resolved CSS variables by default and offers Light / Dark / Transparent."""
+    r = _run_dom_stub("", mode="chart-theme")
+    themes = r["themes"]
+    light, dark = ('fill="#f4f1e8"', "#a63a22"), ('fill="#15130d"', "#cf6f49")
+
+    assert all(token in themes["light"] for token in light)
+    assert all(token in themes["dark"] for token in dark)
+    assert "#f4f1e8" not in themes["dark"] and "#a63a22" not in themes["dark"]
+    assert 'stroke="#443e2d"' in themes["dark"]  # signed metric -> the dark axis colour
+
+    # transparent: no background rect, light ink so it reads on a white slide
+    assert 'width="100%" height="100%"' not in themes["transparent"]
+    assert 'fill="#36321f"' in themes["transparent"]
+
+    # page: light fallback with no DOM styles, and the page's own variables when present
+    assert all(token in themes["page"] for token in light)
+    assert all(token in themes["page_dark_vars"] for token in dark)
+    assert "#f4f1e8" not in themes["page_dark_vars"]
+
+
+def test_benchmark_dashboard_chart_theme_control_is_wired():
+    html = (REPO_ROOT / "benchmark.html").read_text(encoding="utf-8")
+    js = (REPO_ROOT / "assets" / "benchmark-dashboard.js").read_text(encoding="utf-8")
+    assert 'id="benchChartThemeSelect"' in html
+    for value in ("page", "light", "dark", "transparent"):
+        assert f'<option value="{value}"' in html
+    assert "getComputedStyle(document.documentElement)" in js
+
+
+def test_benchmark_dashboard_significance_toggle_is_per_tab():
+    """#864: ticking it on Fairness leaves Summary untouched (and vice versa)."""
+    fairness = pd.read_csv(REPO_ROOT / "results" / "results_fairness.csv")
+    summary = pd.read_csv(REPO_ROOT / "results" / "summary.csv")
+    sig_fair = int(fairness["significant"].sum())
+
+    r = _run_dom_stub("?tab=fairness", mode="sig-per-tab")
+    assert r["fairness_on"].startswith(f"{sig_fair:,} of {len(fairness):,} rows shown")
+    assert r["summary_checked"] is False
+    assert r["summary_text"].startswith(f"{len(summary):,} of {len(summary):,} rows shown")
+    assert "sig=1" not in r["summary_url"]
+    assert r["fairness_checked_again"] is True
+    assert r["fairness_text_again"].startswith(f"{sig_fair:,} of")
+    assert r["summary_still_checked"] is True
+
+
+def test_benchmark_dashboard_chart_does_not_rely_on_colour_alone():
+    """#865: significant bars are hatched in every export theme, and a colour-blind
+    safe palette is offered; the on-screen bars carry the same hatch."""
+    themes = _run_dom_stub("", mode="chart-theme")["themes"]
+    for name in ("light", "dark", "transparent", "colorblind", "page"):
+        svg = themes[name]
+        assert '<pattern id="hatch"' in svg, name
+        assert svg.count('fill="url(#hatch)"') >= 1, name
+    cb = themes["colorblind"]
+    assert 'fill="#d55e00"' in cb and 'fill="#0072b2"' in cb
+    assert "#a63a22" not in cb and "#2f6b4f" not in cb
+
+    css = (REPO_ROOT / "assets" / "benchmark.css").read_text(encoding="utf-8")
+    assert ".bar-fill.bad" in css and "repeating-linear-gradient" in css
+    html = (REPO_ROOT / "benchmark.html").read_text(encoding="utf-8")
+    assert '<option value="colorblind"' in html
+
+
+def test_benchmark_dashboard_export_colours_are_part_of_the_deep_link():
+    """#893: ?chart=<theme> restores the select, a change rewrites the link, "page" is
+    left out, and an unknown value is ignored."""
+    r = _run_dom_stub("?tab=fairness&chart=dark", mode="chart-url")
+    assert r["restored_theme"] == "dark"
+    assert "chart=dark" in r["last_url_after_first_render"]
+    assert "chart=colorblind" in r["url_colorblind"]
+    assert "chart" not in r["url_page"] and "tab=fairness" in r["url_page"]
+
+    bad = _run_dom_stub("?tab=fairness&chart=evil", mode="chart-url")
+    assert bad.get("restored_theme") in ("", "page", None)  # never "evil"
+    assert "chart" not in bad["last_url_after_first_render"]
+
+
+def test_benchmark_dashboard_chart_has_a_key_for_the_hatched_bars():
+    """#894: a two-item key above the chart (and inside the SVG export) says hatched means
+    significant; performance charts, which have no significance flag, get neither."""
+    r = _run_dom_stub()
+    assert r["key_hidden_fairness"] is False and r["key_hidden_performance"] is True
+    assert "hatched = significant gap" in r["svg"] and "plain = not significant" in r["svg"]
+    assert "hatched = significant gap" not in r["perf_svg"]
+    html = (REPO_ROOT / "benchmark.html").read_text(encoding="utf-8")
+    assert 'id="benchKey"' in html and "hatched = significant gap" in html and "plain = not significant" in html
+    assert ".bench-key-swatch" in (REPO_ROOT / "assets" / "benchmark.css").read_text(encoding="utf-8")
+
+
+def test_benchmark_dashboard_key_wording_follows_the_tab():
+    """#905: Summary-tab hatching means significant in every model, on screen and in the export."""
+    r = _run_dom_stub("", mode="summary-key")
+    assert r["fairness_key"] == "hatched = significant gap (p < 0.05)"
+    assert r["summary_key"] == "hatched = significant in every model"
+    assert "hatched = significant in every model" in r["summary_svg"]
+    assert "significant gap" not in r["summary_svg"]

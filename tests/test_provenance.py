@@ -7,7 +7,7 @@ import pytest
 
 from faircode import __version__
 from faircode.cli import main
-from faircode.provenance import build, file_digest, public_params
+from faircode.provenance import build, file_digest, held_out_entries, public_params
 from faircode.report import to_json
 
 ROWS = "gender,region,age\nmale,north,34\nfemale,south,51\nfemale,north,22\n"
@@ -178,3 +178,181 @@ def test_no_provenance_flag_restores_the_old_shape(dataset, capsys):
 def test_terminal_output_is_untouched(dataset, capsys):
     assert main(["profile", str(dataset)]) == 0
     assert "provenance" not in capsys.readouterr().out.lower()
+
+
+# -- held-out files behind --proxy-hints-with (#811) ---------------------------
+
+def test_profile_json_records_held_out_files(dataset, tmp_path, capsys):
+    pytest.importorskip("scipy")
+    held = tmp_path / "dropped.csv"
+    held.write_text("race\nw\nb\nw\n", encoding="utf-8")
+    assert main(["profile", str(dataset), "--proxy-hints",
+                 "--proxy-hints-with", f"{held}=race", "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert prov["proxy_hints_with"] == [
+        {"path": str(held), "column": "race", "sha256": sha_of(held)}]
+
+
+def test_profile_without_held_out_files_keeps_the_old_provenance_shape(dataset, capsys):
+    assert main(["profile", str(dataset), "--json"]) == 0
+    assert "proxy_hints_with" not in json.loads(capsys.readouterr().out)["provenance"]
+
+
+def test_compare_json_records_held_out_files_per_side(dataset, tmp_path, capsys):
+    pytest.importorskip("scipy")
+    other = tmp_path / "later.csv"
+    other.write_text(ROWS + "male,south,60\n", encoding="utf-8")
+    held_a = tmp_path / "held_a.csv"
+    held_a.write_text("race\nw\nb\nw\n", encoding="utf-8")
+    held_b = tmp_path / "held_b.csv"
+    held_b.write_text("race\nw\nb\nw\nb\n", encoding="utf-8")
+    assert main(["compare", str(dataset), str(other), "--proxy-hints",
+                 "--proxy-hints-with-a", f"{held_a}=race",
+                 "--proxy-hints-with-b", f"{held_b}=race", "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert prov["proxy_hints_with_a"][0]["sha256"] == sha_of(held_a)
+    assert prov["proxy_hints_with_b"][0]["sha256"] == sha_of(held_b)
+
+
+def test_held_out_entries_note_an_unreadable_path():
+    from faircode.provenance import held_out_entries
+    (entry,) = held_out_entries(["no/such/file.csv=race"])
+    assert entry["sha256"] is None and "no/such/file.csv" in entry["sha256_note"]
+    assert entry["column"] == "race"
+
+
+# -- encoding recording in provenance (#858) ---------------------------------
+
+def test_profile_json_records_explicit_encoding(dataset, capsys):
+    assert main(["profile", str(dataset), "--encoding", "latin-1", "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert prov["dataset_hash"] == sha_of(dataset)
+    assert prov["encoding"] == "latin-1"
+
+
+def test_profile_json_omits_encoding_for_plain_utf8_default(dataset, capsys):
+    assert main(["profile", str(dataset), "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert "encoding" not in prov
+
+
+def test_profile_json_records_sniffed_bom_encoding(tmp_path, capsys):
+    bom_file = tmp_path / "bom.csv"
+    bom_file.write_bytes(b"\xef\xbb\xbf" + ROWS.encode("utf-8"))
+    assert main(["profile", str(bom_file), "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert prov["encoding"] == "utf-8-sig"
+
+
+def test_compare_json_records_encoding_per_side(dataset, tmp_path, capsys):
+    other = tmp_path / "other.csv"
+    other.write_text(ROWS + "male,south,60\n", encoding="utf-8")
+    assert main(["compare", str(dataset), str(other), "--encoding", "latin-1", "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert prov["dataset_hash_a"] == sha_of(dataset)
+    assert prov["dataset_hash_b"] == sha_of(other)
+    assert prov["encoding_a"] == "latin-1"
+    assert prov["encoding_b"] == "latin-1"
+
+
+def test_build_provenance_places_encoding_beside_dataset_hash(dataset):
+    prov = build([("dataset_hash", str(dataset))], encodings={"dataset_hash": "latin-1"})
+    keys = list(prov)
+    assert keys.index("dataset_hash") + 1 == keys.index("encoding")
+
+
+
+def test_held_out_entries_record_the_encoding_like_the_dataset(dataset, tmp_path, capsys):
+    # #891: explicit choice, sniffed BOM, or nothing for plain UTF-8.
+    pytest.importorskip("scipy")
+    held = tmp_path / "dropped.csv"
+    held.write_text("race\nw\nb\nw\n", encoding="utf-8")
+    assert main(["profile", str(dataset), "--proxy-hints", "--proxy-hints-with", f"{held}=race",
+                 "--encoding", "latin-1", "--json"]) == 0
+    entry = json.loads(capsys.readouterr().out)["provenance"]["proxy_hints_with"][0]
+    assert entry["encoding"] == "latin-1"
+    assert list(entry) == ["path", "column", "sha256", "encoding"]
+
+    assert main(["profile", str(dataset), "--proxy-hints", "--proxy-hints-with", f"{held}=race",
+                 "--json"]) == 0
+    assert "encoding" not in json.loads(capsys.readouterr().out)["provenance"]["proxy_hints_with"][0]
+
+    bom = tmp_path / "bom.csv"
+    bom.write_bytes(b"\xef\xbb\xbf" + b"race\nw\nb\nw\n")
+    assert main(["profile", str(dataset), "--proxy-hints", "--proxy-hints-with", f"{bom}=race",
+                 "--json"]) == 0
+    entry = json.loads(capsys.readouterr().out)["provenance"]["proxy_hints_with"][0]
+    assert entry["encoding"] == "utf-8-sig"
+
+
+def test_held_out_entry_records_its_per_file_encoding_over_the_global_one(dataset):
+    from faircode.provenance import held_out_entries
+
+    (entry,) = held_out_entries([f"{dataset}=race@utf-8"], encoding="latin-1")
+    assert entry["encoding"] == "utf-8"
+
+
+def test_proxy_settings_are_recorded_in_params_when_hints_run(dataset, tmp_path, capsys):
+    # #898: alpha, correction and exact make the p-values reproducible; absent without hints.
+    pytest.importorskip("scipy")
+    assert main(["profile", str(dataset), "--proxy-hints", "--proxy-alpha", "0.01",
+                 "--proxy-correction", "holm", "--proxy-exact", "--json"]) == 0
+    params = json.loads(capsys.readouterr().out)["provenance"]["params"]
+    assert (params["alpha"], params["correction"], params["exact"]) == (0.01, "holm", True)
+
+    assert main(["profile", str(dataset), "--proxy-hints", "--json"]) == 0
+    params = json.loads(capsys.readouterr().out)["provenance"]["params"]
+    assert (params["alpha"], params["correction"], params["exact"]) == (0.05, None, False)
+
+    assert main(["profile", str(dataset), "--json"]) == 0
+    assert "alpha" not in json.loads(capsys.readouterr().out)["provenance"]["params"]
+
+    other = tmp_path / "other.csv"
+    other.write_text(ROWS + "male,south,60\n", encoding="utf-8")
+    assert main(["compare", str(dataset), str(other), "--proxy-hints", "--proxy-exact", "--json"]) == 0
+    params = json.loads(capsys.readouterr().out)["provenance"]["params"]
+    assert params["exact"] is True and params["alpha"] == 0.05
+
+
+def _two_sheet_workbook(path):
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("openpyxl")
+    with pd.ExcelWriter(path) as xw:
+        pd.read_csv(path.parent / "people.csv").to_excel(xw, sheet_name="Main", index=False)
+        pd.DataFrame({"note": ["x"]}).to_excel(xw, sheet_name="Other", index=False)
+
+
+def test_xlsx_provenance_records_the_sheet_read_and_the_ones_ignored(dataset, tmp_path, capsys):
+    # #899: dataset, compare sides and held-out files; other formats keep the old shape.
+    pytest.importorskip("scipy")
+    book = tmp_path / "book.xlsx"
+    _two_sheet_workbook(book)
+    assert main(["profile", str(book), "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert (prov["sheet"], prov["sheets_ignored"]) == ("Main", 1)
+    assert list(prov)[:4] == ["faircode_version", "engine", "dataset_hash", "sheet"]
+
+    assert main(["profile", str(dataset), "--json"]) == 0
+    assert "sheet" not in json.loads(capsys.readouterr().out)["provenance"]
+
+    assert main(["compare", str(book), str(dataset), "--json"]) == 0
+    prov = json.loads(capsys.readouterr().out)["provenance"]
+    assert prov["sheet_a"] == "Main" and prov["sheets_ignored_a"] == 1 and "sheet_b" not in prov
+
+    entries = held_out_entries([f"{book}=sex"], ["x"])
+    assert (entries[0]["sheet"], entries[0]["sheets_ignored"]) == ("Main", 1)
+
+
+def test_build_accepts_two_three_and_four_element_held_out_tuples(tmp_path):
+    # #979: the shorter shapes are documented; only the four-element form was exercised.
+    held = tmp_path / "h.csv"
+    held.write_text("ident\n1\n2\n", encoding="utf-8")
+    spec = [f"{held}=ident"]
+    two = build(held_out=[("proxy_hints_with", spec)])["proxy_hints_with"]
+    three = build(held_out=[("proxy_hints_with", spec, ["sex"])])["proxy_hints_with"]
+    four_untouched = build(held_out=[("proxy_hints_with", spec, ["sex"], [])])["proxy_hints_with"]
+    four_skipped = build(held_out=[("proxy_hints_with", spec, ["sex"], ["ident"])])["proxy_hints_with"]
+    assert two == three == four_untouched
+    assert [e["column"] for e in two] == ["ident"] and "tested" not in two[0]
+    assert four_skipped[0]["tested"] is False and "skip_reason" in four_skipped[0]
+    assert build(held_out=[("proxy_hints_with", [])]).get("proxy_hints_with") is None   # empty specs: omitted
