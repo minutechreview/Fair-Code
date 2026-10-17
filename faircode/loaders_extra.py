@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .loaders import SNIFF_SAMPLE_BYTES, _sniff_delimiter, resolve_encoding, sniff_bom_encoding
+from .loaders import NUL_MESSAGE, SNIFF_SAMPLE_BYTES, _plain_parser_message, _sniff_delimiter, resolve_encoding, sniff_bom_encoding
 from .loaders import read_table as _read_table_frozen
 
 
@@ -43,10 +43,34 @@ def _read_table_impl(path: str, encoding: str | None = None) -> pd.DataFrame:
             content = raw.decode(encoding or sniff_bom_encoding(raw[:4]) or "utf-8")
         else:
             content = sys.stdin.read()
+        if "\x00" in content:   # same check and wording as loaders.read_table (#1025)
+            raise ValueError(NUL_MESSAGE.format(path="stdin"))
         delimiter = _sniff_delimiter(content[:SNIFF_SAMPLE_BYTES])
-        return pd.read_csv(io.StringIO(content), sep=delimiter)
+        try:
+            return pd.read_csv(io.StringIO(content), sep=delimiter)
+        except pd.errors.ParserError as exc:
+            raise ValueError(_plain_parser_message(str(exc))) from exc
 
     suffix = Path(path).suffix.lower()
+
+    if suffix in (".jsonl", ".ndjson"):   # JSON Lines: one object per line (#1027)
+        encoding = resolve_encoding(path, encoding)
+        with open(path, "r", encoding=encoding) as f:
+            lines = f.read().splitlines()
+        records = []
+        for number, line in enumerate(lines, start=1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line.lstrip("\ufeff"))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"line {number} is not valid JSON: {exc}") from exc
+            if not isinstance(record, dict):
+                raise ValueError(f"line {number} is not a JSON object")
+            records.append(record)
+        if not records:
+            raise ValueError(EMPTY_DATASET_MESSAGE)
+        return pd.json_normalize(records)
 
     if suffix == ".json":
         encoding = resolve_encoding(path, encoding)

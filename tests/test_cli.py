@@ -1689,3 +1689,44 @@ def test_compare_rename_across_kinds_reports_the_kind_mismatch(tmp_path, capsys)
     b.write_text("race\n" + "x\ny\n" * 40)
     assert main(["compare", str(a), str(b), "--rename", "sex=race"]) == 0
     assert "detected as sex vs race on the two datasets" in capsys.readouterr().out
+
+
+def test_unsupported_spreadsheet_format_is_named_not_blamed_on_encoding(tmp_path, capsys):
+    # #1018
+    path = tmp_path / "old.xls"
+    path.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 200)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["profile", str(path)])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unsupported format .xls" in err and ".xlsx" in err
+    assert "--encoding" not in err and "not valid utf-8" not in err
+
+
+def test_fail_on_drift_refuses_to_pass_when_nothing_can_be_compared(tmp_path, capsys):
+    # #1017: two files with no detectable dimension, or only headers, are an error for the gate.
+    nodims = tmp_path / "nodims.csv"
+    nodims.write_text("x,y\n1,2\n", encoding="utf-8")
+    header = tmp_path / "header.csv"
+    header.write_text("sex,race\n", encoding="utf-8")
+    for path in (nodims, header):
+        assert main(["compare", str(path), str(path), "--fail-on-drift"]) == 2
+        assert "cannot apply --fail-on-drift" in capsys.readouterr().err
+    assert main(["compare", str(nodims), str(nodims)]) == 0          # without the gate it is just a report
+    same = tmp_path / "same.csv"
+    same.write_text("sex\n" + "m\nf\n" * 20, encoding="utf-8")
+    assert main(["compare", str(same), str(same), "--fail-on-drift"]) == 0   # a real, drift-free comparison passes
+
+
+def test_reference_csv_with_a_blank_share_ignores_that_row(tmp_path, capsys):
+    # #1028: a blank share cell is skipped, not used as nan, and the rest of the baseline still applies.
+    data = tmp_path / "d.csv"
+    data.write_text("sex\n" + "M\nF\n" * 30, encoding="utf-8")
+    ref = tmp_path / "ref.csv"
+    ref.write_text("column,group,share\nsex,M,0.5\nsex,F,0.5\nsex,X,\n", encoding="utf-8")
+    assert main(["profile", str(data), "--reference", str(ref), "--json"]) == 0
+    out = capsys.readouterr().out
+    assert "NaN" not in out and "Infinity" not in out
+    groups = {g["label"] for g in json.loads(out)["dimensions"][0]["reference"]["groups"]}
+    assert groups == {"M", "F"}

@@ -127,6 +127,16 @@ Category labels are literal data, including names such as `__proto__`, `construc
 and `toString`. They must be retained in distinct counts, groups, intersections,
 reference baselines, and drift comparisons, with no inherited-property lookups.
 
+**Label collisions (informational).** Within each dimension, compare distinct observed
+group labels after trimming the Unicode White_Space characters plus U+FEFF and
+applying full Unicode case-folding. If labels
+match, add a flag such as `sex: 'M' and 'm' differ only in case or spacing`.
+Compare each subsequent matching label to the first in the groups' count-descending,
+label-ascending order, once per label rather than per row. Keep the original labels,
+groups, counts, shares, metrics, and scores unchanged. Do not apply join keys' NFKC
+or numeric normalization: `01` and `1`, or `Ａ` and `A`, remain distinct without this
+warning. The flags appear in the terminal, browser, and exported reports.
+
 - **shares** - the `p_i`, descending, with raw counts.
 - **ci_low / ci_high** - a 95% **Wilson score interval** on each group's share, so a share read off a small sample carries its sampling uncertainty. For a group with count `c` out of `N_nonnull = n`, `p = c/n`, `z = 1.959963984540054`:
   - `center = (p + z²/2n) / (1 + z²/n)`, `margin = (z / (1 + z²/n)) · √( p(1−p)/n + z²/4n² )`
@@ -232,7 +242,7 @@ dict, JS uses a plain object):
 `flags` is a human-readable list assembled from: every `under_represented` group, every dimension
 with `imbalance_ratio ≥ 3`, every dimension with `missing_pct ≥ 0.05`, every age dimension with
 `implausible_values` (an optional integer key present only when above zero, #840), and every
-intersectional gap.
+intersectional gap, plus the label-collision warnings from section 3.
 
 ---
 
@@ -315,6 +325,8 @@ five categories above), `false` if `flags` is empty or contains only kind-mismat
 `compare --fail-on-drift` checks `drift_detected`, not `bool(flags)`, so a schema change between two
 snapshots that makes a dimension unmeasurable (e.g. one side's ages banded, the other left raw)
 doesn't false-positive as "drift detected" in a CI gate (see issue #472).
+
+A gate with nothing to measure does not pass: when no dimension has any group on either side and none was added or removed (two files with no detectable dimension, or only headers), `--fail-on-drift` exits 2 with "cannot apply --fail-on-drift", like `profile --fail-under` on a profile with no score (#1017).
 
 ### Result shape
 

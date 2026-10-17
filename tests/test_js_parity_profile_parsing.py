@@ -322,3 +322,130 @@ def test_python_js_reject_an_empty_file_with_the_same_message(tmp_path):
     header.write_text("sex,race\n", encoding="utf-8")
     assert subprocess.run(["node", "scripts/engine-js.js", "profile", str(header)],
                           capture_output=True, text=True, encoding="utf-8").returncode == 0
+
+
+def _label_parity(tmp_path, name, text, command="profile"):
+    """Profile one file in both engines and return (python result, js result)."""
+    from faircode.loaders_extra import read_table as read_any_table
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    py = json.loads(json.dumps(profile(read_any_table(str(path)), None, {})))
+    js = json.loads(subprocess.run(["node", "scripts/engine-js.js", command, str(path)],
+                                   capture_output=True, text=True, encoding="utf-8", check=True).stdout)
+    assert js == py
+    return py
+
+
+def _labels(result, index=0):
+    return [(g["label"], g["count"]) for g in result["dimensions"][index]["groups"]]
+
+
+def test_csv_numeric_code_columns_are_labelled_like_pandas(tmp_path):
+    """#1011: an integer column with a blank is float64 in pandas but its labels stay 1 and 2; leading
+    zeros, exponents and spaced numbers follow the number, lowercase booleans become True/False."""
+    sexes = "".join(f"{'m' if i % 2 else 'f'}\n" for i in range(30)).split()
+    def csv(column):
+        return "sex,race\n" + "".join(f"{s},{column[i % len(column)]}\n" for i, s in enumerate(sexes))
+    assert _labels(_label_parity(tmp_path, "a.csv", csv(["1", "2", ""])), 1) == [("1", 10), ("2", 10)]
+    assert _labels(_label_parity(tmp_path, "b.csv", csv(["007", "7.0", "8"])), 1) == [("7", 20), ("8", 10)]
+    assert _labels(_label_parity(tmp_path, "c.csv", csv(["1.50", "1.5", "2e3"])), 1) == [("1.5", 20), ("2000", 10)]
+    assert _labels(_label_parity(tmp_path, "d.csv", csv(["true", "False", "TRUE"])), 1) == [("True", 20), ("False", 10)]
+    assert _labels(_label_parity(tmp_path, "e.csv", csv(["1", "2", "x"])), 1) == [("1", 10), ("2", 10), ("x", 10)]
+
+
+def test_json_booleans_floats_and_exponents_are_labelled_alike(tmp_path):
+    """#1012, #1013, #1015: JSON true is True, 1.0 is 1 and 1e-7 is written 1e-07 in both engines."""
+    def records(values):
+        return json.dumps([{"race": values[i % len(values)]} for i in range(30)])
+    assert _labels(_label_parity(tmp_path, "b.json", records([True, False, True]), "profile-json")) == [("True", 20), ("False", 10)]
+    assert _labels(_label_parity(tmp_path, "f.json", records([1.0, 2.0, 1]), "profile-json")) == [("1", 20), ("2", 10)]
+    exp = _labels(_label_parity(tmp_path, "e2.json", records([1e-7, 1.5e-7, 0.00001]), "profile-json"))
+    assert sorted(label for label, _ in exp) == ["1.5e-07", "1e-05", "1e-07"]
+
+
+def test_json_integers_above_2_53_keep_every_digit(tmp_path):
+    """#1014: 9007199254740993 and 9007199254740992 are two groups in the web engine as in Python."""
+    text = "[" + ",".join('{"race": %s}' % v for v in ["9007199254740993", "9007199254740992", "-9007199254740993"] * 10) + "]"
+    assert _labels(_label_parity(tmp_path, "big.json", text, "profile-json")) == [
+        ("-9007199254740993", 10), ("9007199254740992", 10), ("9007199254740993", 10)]
+
+
+def test_ties_are_ordered_by_code_point_in_both_engines(tmp_path):
+    """#1016: a label outside the BMP sorts after full-width letters, as in Python, including in the
+    intersection cells."""
+    text = json.dumps([{"race": v, "sex": "m" if i % 2 else "f"} for i, v in enumerate(["\U0001F600", "ｚ", "a"] * 10)])
+    result = _label_parity(tmp_path, "astral.json", text, "profile-json")
+    assert [label for label, _ in _labels(result)] == ["a", "ｚ", "😀"]
+
+
+def test_python_js_reject_a_nul_byte_with_the_same_stem(tmp_path):
+    """#1025: a NUL inside a cell is an error in both engines, not 'b' in one and 'b\\x00c' in the other;
+    UTF-16 read with the right encoding (full of zero bytes) still loads."""
+    from faircode.loaders_extra import read_table as read_any_table
+    path = tmp_path / "nul.csv"
+    path.write_bytes(b"sex,race\nm,a\nf,b\x00c\nm,a\n")
+    with pytest.raises(ValueError, match="contains NUL bytes"):
+        read_any_table(str(path))
+    done = subprocess.run(["node", "scripts/engine-js.js", "profile", str(path)],
+                          capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode != 0 and "contains NUL bytes" in done.stderr
+    utf16 = tmp_path / "u16.csv"
+    utf16.write_bytes("sex,race\nm,a\nf,b\n".encode("utf-16"))
+    assert list(read_any_table(str(utf16)).columns) == ["sex", "race"]
+    assert list(read_any_table(str(utf16), encoding="utf-16").columns) == ["sex", "race"]
+
+
+@pytest.mark.parametrize("name, text, message", [
+    ("ragged.csv", "sex,race\nm,a\nf,b,extra\nm,a\nf,b\n", "line 3 has 3 fields but the header has 2"),
+    ("unclosed.csv", 'sex,race\nm,a\nf,"b\nm,a\n', "a quoted field starting at row 2 is never closed"),
+])
+def test_python_js_refuse_malformed_rows_with_the_same_message(tmp_path, name, text, message):
+    """#1023, #1024: a row longer than the header and a quote that never closes are errors in both
+    engines, in the same words (not pandas' 'C error' text, and not silently trimmed or swallowed)."""
+    from faircode.loaders_extra import read_table as read_any_table
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        read_any_table(str(path))
+    done = subprocess.run(["node", "scripts/engine-js.js", "profile", str(path)],
+                          capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode != 0 and message in done.stderr
+
+
+def test_a_short_row_is_still_padded_with_missing_values(tmp_path):
+    """The other direction is not an error: pandas and the JS parser both fill the gap with a blank."""
+    result = _label_parity(tmp_path, "short.csv", "sex,race\nm,a\nf\nm,a\nf,b\n")
+    assert result["dimensions"][1]["missing_pct"] == 0.25
+
+
+def test_python_js_accept_nan_and_infinity_literals_in_json(tmp_path):
+    """#1026: NaN is a missing value and Infinity is the text inf in both engines."""
+    records = ",".join('{"sex":"%s","race":%s}' % ("m" if i % 2 else "f", ["NaN", "Infinity", '"a"', "-Infinity"][i % 4])
+                       for i in range(40))
+    result = _label_parity(tmp_path, "nan.json", "[" + records + "]", "profile-json")
+    assert _labels(result, 1) == [("-inf", 10), ("a", 10), ("inf", 10)]
+    assert result["dimensions"][1]["missing_pct"] == 0.25
+
+
+def test_python_js_read_json_lines_files(tmp_path):
+    """#1027: .jsonl and .ndjson are one record per line in both engines, with nested objects flattened;
+    a bad line is named, and a one-record file is not mistaken for a plain JSON object."""
+    from faircode.loaders_extra import read_table as read_any_table
+    lines = "\n".join(json.dumps({"sex": "m" if i % 2 else "f", "loc": {"state": "TX" if i % 3 else "CA"}}) for i in range(30))
+    for name in ("rows.jsonl", "rows.ndjson"):
+        result = _label_parity(tmp_path, name, lines + "\n\n", "profile-json")
+        assert [d["name"] for d in result["dimensions"]] == ["sex", "loc.state"] and result["n_rows"] == 30
+    one = _label_parity(tmp_path, "one.jsonl", '{"sex": "m"}\n', "profile-json")
+    assert one["n_rows"] == 1
+    for text, message in (('{"sex": "m"}\n{oops}\n', "line 2 is not valid JSON"), ('{"sex": "m"}\n[1, 2]\n', "line 2 is not a JSON object")):
+        bad = tmp_path / "bad.jsonl"
+        bad.write_text(text, encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            read_any_table(str(bad))
+        done = subprocess.run(["node", "scripts/engine-js.js", "profile-json", str(bad)],
+                              capture_output=True, text=True, encoding="utf-8")
+        assert done.returncode != 0 and message in done.stderr
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("\n\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="dataset is empty"):
+        read_any_table(str(empty))

@@ -4,13 +4,21 @@ Supports .csv, .tsv, and .xlsx (the last requires the optional `openpyxl`
 extra: `pip install faircode[excel]`). Files with an unrecognized or missing
 extension fall back to sniffing the delimiter from their content, so a
 tab-separated export saved with a `.csv` extension still reads correctly.
+A few well-known formats that are not supported (.xls, .ods and so on) are
+rejected by name instead, because reading them as text only produces an
+encoding error (#1018).
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pandas as pd
+
+# Formats people commonly try that are binary and not supported. Reading one as text fails with a
+# "not valid utf-8" error that points at --encoding, which cannot help, so name the format instead (#1018).
+UNSUPPORTED_SUFFIXES = (".xls", ".ods", ".feather", ".pkl", ".zip", ".7z")
 
 SNIFF_DELIMITERS = ",\t;|"
 SNIFF_SAMPLE_BYTES = 8192
@@ -61,13 +69,35 @@ def read_table(path: str, encoding: str | None = None) -> pd.DataFrame:
                 "(install with: pip install faircode[excel])"
             ) from exc
 
-    if suffix == ".tsv":
-        return _read_delimited(path, default="\t", encoding=encoding)
+    if suffix in (".tsv", ".csv"):
+        _reject_nul_bytes(path, encoding, NUL_MESSAGE)
+        return _read_delimited(path, default="\t" if suffix == ".tsv" else ",", encoding=encoding)
 
-    if suffix == ".csv":
-        return _read_delimited(path, default=",", encoding=encoding)
+    # A missing file keeps its "file not found" error: only an existing file is reported as the wrong format.
+    if suffix in UNSUPPORTED_SUFFIXES and Path(path).exists():
+        raise ValueError(f"unsupported format {suffix}: save it as .xlsx or .csv")
 
+    # An unknown suffix is sniffed as text, but a file that is not text at all must not "profile" (#1019).
+    _reject_nul_bytes(path, encoding, "{path} looks like a binary file, not a table (it contains NUL bytes)")
     return _read_delimited(path, default=",", encoding=encoding)
+
+
+NUL_MESSAGE = "{path} contains NUL bytes: is it UTF-16 without a byte-order mark? try --encoding utf-16"
+
+
+def _reject_nul_bytes(path: str, encoding: str | None, message: str) -> None:
+    """Raise ValueError(message.format(path=path)) if the decoded text of `path` holds a NUL character.
+
+    Checked on decoded text, so a UTF-16 file read with the right encoding (whose bytes are full of
+    zeros) passes. pandas' C parser would cut a field at a NUL without a word (#1025)."""
+    encoding = resolve_encoding(path, encoding)
+    with open(path, "r", encoding=encoding, errors="replace", newline="") as fh:
+        while True:
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                return
+            if "\x00" in chunk:
+                raise ValueError(message.format(path=path))
 
 
 def _read_delimited(path: str, *, default: str, encoding: str | None = None) -> pd.DataFrame:
@@ -78,7 +108,22 @@ def _read_delimited(path: str, *, default: str, encoding: str | None = None) -> 
     encoding = resolve_encoding(path, encoding)
     with open(path, "r", encoding=encoding, errors="replace", newline="") as fh:
         sample = fh.read(SNIFF_SAMPLE_BYTES)
-    return pd.read_csv(path, sep=_sniff_delimiter(sample, default=default), encoding=encoding)
+    try:
+        return pd.read_csv(path, sep=_sniff_delimiter(sample, default=default), encoding=encoding)
+    except pd.errors.ParserError as exc:
+        raise ValueError(_plain_parser_message(str(exc))) from exc
+
+
+def _plain_parser_message(text: str) -> str:
+    """pandas' tokenizer errors in the words the web engine uses (#1023, #1024)."""
+    ragged = re.search(r"Expected (\d+) fields? in line (\d+), saw (\d+)", text)
+    if ragged:
+        expected, line, saw = ragged.groups()
+        return f"line {line} has {saw} fields but the header has {expected}"
+    unclosed = re.search(r"EOF inside string starting at row (\d+)", text)
+    if unclosed:
+        return f"a quoted field starting at row {unclosed.group(1)} is never closed"
+    return text
 
 
 def _logical_row_delimiter_counts(text: str, delimiter: str, max_rows: int = 5) -> list[int]:

@@ -336,7 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("profile", help="profile a dataset for demographic imbalance")
     p.add_argument("csv", nargs="?",
-                   help="path to the dataset file (.csv, .tsv, .xlsx, .json, or .parquet), "
+                   help="path to the dataset file (.csv, .tsv, .xlsx, .json, .jsonl, or .parquet), "
                         "or - to read CSV/TSV from stdin (omit if using --sample)")
     p.add_argument("--sample", action="store_true",
                    help="profile a small bundled sample dataset instead of a file - "
@@ -431,9 +431,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("compare",
                        help="compare two datasets for representation drift")
-    c.add_argument("csv_a", help="baseline dataset A (.csv, .tsv, .xlsx, .json, or .parquet), "
+    c.add_argument("csv_a", help="baseline dataset A (.csv, .tsv, .xlsx, .json, .jsonl, or .parquet), "
                                  "or - to read CSV/TSV from stdin")
-    c.add_argument("csv_b", help="current dataset B (.csv, .tsv, .xlsx, .json, or .parquet), "
+    c.add_argument("csv_b", help="current dataset B (.csv, .tsv, .xlsx, .json, .jsonl, or .parquet), "
                                  "or - to read CSV/TSV from stdin")
     c.add_argument("--json", action="store_true", help="emit JSON to stdout")
     c.add_argument("--html", metavar="PATH",
@@ -838,6 +838,13 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
         if held_report.notes:   # visible to --json consumers, not only on stderr (#921)
             result["notes"] = list(held_report.notes)
+
+        if args.fail_on_drift and not (any(d["groups"] or d["kind_mismatch"] for d in result["dimensions"])
+                                      or result["added_dimensions"] or result["removed_dimensions"]):
+            # like --fail-under on a profile with no score: a gate with nothing to measure must not pass (#1017)
+            print("error: cannot apply --fail-on-drift: no dimension was found in either dataset to compare",
+                  file=sys.stderr)
+            return 2
 
         if args.html:
             html_content = compare_to_html(result)
