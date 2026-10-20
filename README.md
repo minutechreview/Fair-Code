@@ -194,7 +194,8 @@ Fair-Code/
 │   ├── mcp_server.py                    #   `faircode-mcp` entry point - 6 MCP tools (SPEC.md section 11)
 │   ├── provenance.py                    #   dataset SHA-256 + resolved-params block for --json/--html exports
 │   ├── _explainers/                     #   generated mirror of explainers/*.md, for the MCP tools
-│   └── _results_frozen/                 #   generated mirror of paper/results-frozen/*.csv, for the MCP tools
+│   ├── _results_frozen/                 #   generated mirror of paper/results-frozen/*.csv, for the MCP tools
+│   └── _results_current/                #   generated mirror of results/*.csv, for get_benchmark_results(source="current")
 ├── tests/
 │   ├── fixtures/                        #   sample datasets for loader/edge-case tests
 │   ├── test_benchmark.py                # end-to-end benchmark harness tests
@@ -208,6 +209,7 @@ Fair-Code/
 │   ├── test_dependency_versions.py      #   requirements-lock.txt pins meet pyproject.toml floors
 │   ├── test_figures.py                  #   results_fairness.csv -> figures/*.png rendering
 │   ├── test_freeze_paper_results.py     #   results/ -> paper/results-frozen/ snapshot script
+│   ├── test_diff_results.py             #   results/ vs snapshot diff script
 │   ├── test_generate_images.py          #   favicon / OG-image generation
 │   ├── test_js_category_keys.py         #   JS/Python dimension-category key parity
 │   ├── test_js_parity_*.py              #   JS profiler engine mirrors the Python one (profile, proxy, held-out, provenance, exports, compare, keywords, CLI command); js_helpers.py is shared
@@ -250,6 +252,7 @@ Fair-Code/
 │   ├── check_generated_files_current.py #   verifies build_explainers.py output is up to date
 │   ├── engine-js.js                     #   Node harness for the JS profiler parity tests
 │   ├── freeze_paper_results.py          #   snapshots results/ -> paper/results-frozen/
+│   ├── diff_results.py                  #   diffs results/ against the paper/results-frozen/ snapshot
 │   ├── generate_favicons.py
 │   ├── generate_og_images.py            #   renders the 1200x630 OG share images
 │   ├── parse-json-js.js
@@ -317,7 +320,14 @@ Fair-Code/
 │   ├── differential-privacy.md
 │   ├── reject-option-classification.md
 │   ├── simpsons-paradox.md
-│   └── subgroup-fairness.md
+│   ├── subgroup-fairness.md
+│   ├── algorithmic-recourse.md
+│   ├── maxmin-fairness.md
+│   ├── distributionally-robust-optimization.md
+│   ├── fairness-in-ranking.md
+│   ├── reweighing.md
+│   ├── group-specific-thresholds.md
+│   └── permutation-test-fairness-gaps.md
 │
 ├── .pre-commit-config.yaml              # em-dash/broken-links/ruff + build-explainers pre-push hooks
 ├── CHANGELOG.md
@@ -808,10 +818,10 @@ features = [
 
 ## Explainers
 
-62 short, plain-language write-ups of individual fairness concepts, each with runnable detection code. The healthcare-focused ones are called out above in [Healthcare AI Bias Focus](#healthcare-ai-bias-focus).
+68 short, plain-language write-ups of individual fairness concepts, each with runnable detection code. The healthcare-focused ones are called out above in [Healthcare AI Bias Focus](#healthcare-ai-bias-focus).
 
 <details>
-<summary><strong>Show all 62 explainers →</strong></summary>
+<summary><strong>Show all 68 explainers →</strong></summary>
 
 | Explainer | What it covers |
 |-----------|----------------|
@@ -876,6 +886,13 @@ features = [
 | [What Is Reject Option Classification?](explainers/reject-option-classification.md) | A post-processing mitigation that hands the favorable outcome to the disadvantaged group only in the model's least-confident cases |
 | [What Is Simpson's Paradox in Fairness Audits?](explainers/simpsons-paradox.md) | Why a model can look fair pooled across groups while every disaggregated subgroup shows the opposite pattern |
 | [What Is Subgroup Fairness (and Fairness Gerrymandering)?](explainers/subgroup-fairness.md) | Why passing every single-attribute fairness check doesn't rule out a large gap hiding in an unchecked combination of attributes |
+| [What Is Algorithmic Recourse?](explainers/algorithmic-recourse.md) | What an applicant can realistically change to flip a model's decision, and why recourse can cost one group more than another |
+| [What Is Max-Min (Rawlsian) Fairness?](explainers/maxmin-fairness.md) | Judging a model by its worst-off group instead of by parity, and why the two can disagree |
+| [What Is Distributionally Robust Optimization (DRO) for Fairness?](explainers/distributionally-robust-optimization.md) | Training against the worst-case group instead of constraining one parity metric, and what it costs the other groups |
+| [What Is Fairness in Ranking?](explainers/fairness-in-ranking.md) | Why classification metrics cannot see the harm of an ordered list, and how exposure measures it |
+| [What Is Reweighing?](explainers/reweighing.md) | A pre-processing mitigation that weights each (group, label) cell as if group and label were independent |
+| [What Are Group-Specific Thresholds?](explainers/group-specific-thresholds.md) | A post-processing mitigation that keeps the model and moves the score cutoff per group |
+| [What Is a Permutation Test for a Fairness Gap?](explainers/permutation-test-fairness-gaps.md) | Shuffling group labels to tell a real gap from sampling noise, and why the same gap can be significant or not by sample size |
 
 </details>
 
@@ -1047,7 +1064,7 @@ provenance) instead of being tested; raise `--max-categorical-card` to test it a
 For CI, `--fail-under N` returns exit code `1` and explains the failing score
 on stderr when the overall representation score is below `N`; report output,
 including `--json`, remains on stdout. A score at or above the threshold exits
-successfully.
+successfully. `N` must be between 0 and 100; any other value exits `2` with an error.
 
 `--json` output carries a `provenance` block recording the SHA-256 of the input
 file, the `faircode` version, and the thresholds actually resolved for the run,
@@ -1059,7 +1076,7 @@ from the inputs, so `--json` stays reproducible; `--no-provenance` omits it.
 tools over stdio: `profile_dataset`, `compare_datasets`, and `proxy_hints` wrap the same analysis
 engine the CLI uses, so an MCP-aware agent can profile a file mid-conversation instead of shelling
 out and parsing text; `list_explainers`, `get_explainer`, and `get_benchmark_results` are read-only
-lookups against this repo's own published explainers and frozen benchmark results. Same local-only
+lookups against this repo's own published explainers and benchmark results (the current `results/`, or the earlier reference snapshot with `source="frozen"`). Same local-only
 trust boundary as the CLI - stdio, no network listener, no auth; nothing here is a new capability.
 Point a client at it with:
 
@@ -1094,6 +1111,41 @@ CSV layout in [section 12](faircode/SPEC.md#12-csv-export)):
 | `exact_permutations` / `exact_max_rows` | `compare_datasets`, `proxy_hints` | Shuffle count (at most 1,000,000, default 1000) and row cap (default 20000) for `exact` (CLI `--proxy-exact-permutations` / `--proxy-exact-max-rows`) |
 | `max_categorical_card` / `max_dimension_groups` | `profile_dataset`, `compare_datasets`, `proxy_hints` | Caps on categorical cardinality (default 20) and groups per dimension (default 50) (CLI `--max-categorical-card` / `--max-dimension-groups`) |
 | `renames` | `compare_datasets` | `{"race": "ethnicity"}` compares a renamed dimension as one (CLI `--rename`) |
+| `kind` | `get_benchmark_results` | Result type: `"fairness"` (default) or `"performance"`. Fairness results include protected-attribute metrics; performance results include model-performance metrics. |
+| `source` | `get_benchmark_results` | Results to read: `"frozen"` (default), the earlier reference snapshot in `paper/results-frozen/`, or `"current"`, the live results in `results/`. The returned `source` identifies which set was used. |
+| `audit` | `get_benchmark_results` | Optional case-sensitive exact-match filter for the audit, e.g. `"compas"`. |
+| `model` | `get_benchmark_results` | Optional case-sensitive exact-match filter for the model, e.g. `"logistic_regression"`. |
+| `strategy` | `get_benchmark_results` | Optional case-sensitive exact-match filter for the strategy, e.g. `"baseline"`. |
+| `metric` | `get_benchmark_results` | Optional case-sensitive exact-match filter for the metric. |
+| `protected_attribute` | `get_benchmark_results` | Optional case-sensitive exact-match filter for the protected attribute; applies to fairness results, not performance results. |
+
+`get_benchmark_results` matches filter values exactly and case-sensitively. For example, use `audit="compas"` rather than `audit="COMPAS"`. Omit optional filters to leave those dimensions unfiltered. A filter for a column that does not exist in the selected result type raises an error rather than being ignored.
+
+The tool returns `source`, `results`, `total_matches`, and `truncated`. Results are capped at 200 rows. If `truncated` is `true`, add filters to narrow the query rather than assuming the returned rows represent all matches. If a filter matches no values, `results` is empty and a `notes` entry identifies valid values for that column.
+
+Example arguments for the MCP tool `get_benchmark_results`:
+
+Read the earlier frozen reference snapshot:
+
+```json
+{
+  "source": "frozen",
+  "kind": "fairness",
+  "audit": "compas"
+}
+```
+
+Read the live benchmark results:
+
+```json
+{
+  "source": "current",
+  "kind": "fairness",
+  "audit": "compas"
+}
+```
+
+The returned `source` field identifies which result set answered the query. Use `"frozen"` for the earlier reference snapshot or `"current"` for the live results.
 
 The engine is domain-agnostic - it works on any tabular CSV (health, hiring, lending, justice),
 auto-detecting demographic columns (sex, race, age, geography) by name. Beyond the single-dataset
@@ -1135,7 +1187,14 @@ pip install -e ".[benchmark]"                      # scikit-learn + pyyaml + fai
 faircode benchmark                                  # discovers every */audit.yaml, writes results/
 faircode benchmark --out results/ --n-resamples 2000 --n-permutations 2000
 faircode benchmark COMPAS/audit.yaml                # run a subset explicitly
+faircode benchmark --root ~/audits                  # search ~/audits/*/audit.yaml instead of the current directory
+faircode benchmark --no-plots                       # CSVs only: no figures/ and matplotlib is not needed
 ```
+
+`--root PATH` is the directory searched for `*/audit.yaml` (one level down; default: the current
+directory), so the harness can run from outside the repository. It is ignored when you pass manifest
+paths. `--no-plots` skips the `figures/*.png` files; `results_fairness.csv`, `results_performance.csv`
+and `summary.csv` are still written.
 
 Writes `results_fairness.csv`, `results_performance.csv`, `summary.csv`, and one
 `figures/<audit>_strategies.png` per audit (300 dpi, rendered by `faircode/figures.py` straight from
@@ -1154,41 +1213,32 @@ model as the Profiler, reusing its CSV parser (`assets/profiler-engine.js`).
 
 ## Reproducibility & Results History
 
-The repo keeps changing - new audits, new strategies, reruns with more resamples - so reproducing a
-specific past result means pinning down exactly what produced it, not just re-running whatever's
-currently in `results/`.
+The repo keeps changing - new audits, new strategies, reruns with more resamples - so reproducing a specific past result means pinning down exactly what produced it, not just re-running whatever's currently in `results/`.
 
-**The randomness is pinned.** All seven manifests use `random_state: 42`. Every model family
-(`faircode/models.py`), every train/test split (stratified), and every bootstrap resample /
-permutation shuffle (`faircode/significance.py`, `faircode/metrics.py`) takes that seed explicitly -
-nothing reads numpy's global random state, so two runs of the same manifest against the same data
-are bit-for-bit identical.
+**The randomness is pinned.** All seven manifests use `random_state: 42`. Every model family (`faircode/models.py`), every train/test split (stratified), and every bootstrap resample / permutation shuffle (`faircode/significance.py`, `faircode/metrics.py`) takes that seed explicitly - nothing reads numpy's global random state, so two runs of the same manifest against the same data are bit-for-bit identical.
 
-**The environment can be pinned.** [`requirements-lock.txt`](requirements-lock.txt) is an exact
-`pip freeze` of the environment that produced a past run of `results/` - not the loose version
-ranges in `requirements.txt`, which drift over time. Reproduce that exact environment with
-`pip install -r requirements-lock.txt`.
+**The environment can be pinned.** [`requirements-lock.txt`](requirements-lock.txt) is an exact `pip freeze` of the environment that produced a past run of `results/` - not the loose version ranges in `requirements.txt`, which drift over time. Reproduce that exact environment with:
 
-**A results snapshot can be frozen for later comparison.** `results/` at the repo root is live - it
-changes every time someone reruns the harness or a new audit lands. `paper/results-frozen/` is a
-kept snapshot from an earlier analysis pass, useful as a point of comparison while the repo keeps
-moving:
+```bash
+pip install -r requirements-lock.txt
+```
+
+**A results snapshot can be frozen for later comparison.** `results/` at the repo root is live - it changes every time someone reruns the harness or a new audit lands. `paper/results-frozen/` is a kept snapshot from an earlier analysis pass, useful as a point of comparison while the repo keeps moving.
+
+**For new audits and reruns:** Update `results/` as usual. Do not regenerate `paper/results-frozen/` or move the `v1.0-paper` tag as part of an ordinary audit. Run `scripts/freeze_paper_results.py` only when deliberately creating a new reference snapshot; it replaces the existing frozen snapshot and mirrors its CSV files into `faircode/_results_frozen/`.
+
+To see how far `results/` has moved from that snapshot, run `python3 scripts/diff_results.py`. It joins the two tables per audit, strategy, model, protected attribute and metric and prints the per-row change, flagging rows that moved by more than `--threshold` (default 0.01) or exist on one side only (`--json`, `--all`, `--kind` and `--fail-on-change` are also available; it only reads).
+
+To deliberately create a new reference snapshot, run:
 
 ```bash
 python3 scripts/freeze_paper_results.py --tag <some-tag>
 ```
 
-This copies `results/` into a snapshot alongside a `MANIFEST.md` recording the exact git commit, the
-Python/scikit-learn/fairlearn/pandas/numpy versions, and the exact list of `audit.yaml` manifests
-included - so a given snapshot is a defined, reproducible set tied to a specific commit, not an
-informal count. It prints (but never runs) the `git tag` / `git push --tags` command needed to
-actually tag the release, since tagging is a deliberate, public action this script shouldn't take on
-its own.
+This copies `results/` into a snapshot alongside a `MANIFEST.md` recording the exact git commit, the Python/scikit-learn/fairlearn/pandas/numpy versions, and the exact list of `audit.yaml` manifests included - so a given snapshot is a defined, reproducible set tied to a specific commit, not an informal count. The script prints (but never runs) the `git tag` / `git push --tags` command needed to actually tag the release, since tagging is a deliberate, public action this script shouldn't take on its own.
 
-**The current reference snapshot is tagged.** `paper/results-frozen/` carries the
-[`v1.0-paper`](https://github.com/yakew7/Fair-Code/releases/tag/v1.0-paper) tag (commit `bbef2ba`),
-published as a GitHub release and deliberately kept off "Latest" so it never displaces the current release. It's
-kept as historical reference, not as evidence for a live publication - see [CLAUDE.md](CLAUDE.md).
+**The current reference snapshot is tagged.** `paper/results-frozen/` carries the [`v1.0-paper`](https://github.com/yakew7/Fair-Code/releases/tag/v1.0-paper) tag (commit `bbef2ba`), published as a GitHub release and deliberately kept off "Latest" so it never displaces the current release. It's kept as historical reference, not as evidence for a live publication - see [CLAUDE.md](CLAUDE.md).
+
 
 ---
 
@@ -1215,7 +1265,7 @@ kept as historical reference, not as evidence for a live publication - see [CLAU
 - [ ] LLM bias audit
 
 <details>
-<summary><strong>Show 64 completed items →</strong></summary>
+<summary><strong>Show 71 completed items →</strong></summary>
 
 - [x] COMPAS Criminal Justice Bias
 - [x] AI Fair Recruitment Bias
@@ -1279,6 +1329,13 @@ kept as historical reference, not as evidence for a live publication - see [CLAU
 - [x] Explainer: Why Fairness Through Unawareness Fails
 - [x] Explainer: What Is LIME?
 - [x] Explainer: What Is a Counterfactual Explanation?
+- [x] Explainer: Algorithmic Recourse
+- [x] Explainer: Max-Min (Rawlsian) Fairness
+- [x] Explainer: Distributionally Robust Optimization (DRO) for Fairness
+- [x] Explainer: Fairness in Ranking
+- [x] Explainer: Reweighing
+- [x] Explainer: Group-Specific Thresholds
+- [x] Explainer: Permutation Tests for Fairness Gaps
 - [x] Fairness audit web dashboard - [Open Dataset Profiler](#open-dataset-profiler)
 - [x] Bias detection utility library (`faircode/` module)
 
@@ -1300,12 +1357,12 @@ The full public roadmap - with phases, completion status, and content schedule -
 |--------|------:|
 | GitHub Stars | 51 |
 | External Contributors | 52 |
-| Forks | 58 |
+| Forks | 62 |
 | Watching | 8 |
 | Combined Social Reach (Instagram + LinkedIn) | 30K+ |
 | Countries Reached (Website Visitors) | 20 |
 | Code Audits Published | 7 |
-| Explainers Published | 62 |
+| Explainers Published | 68 |
 
 Tracked weekly in [METRICS.md](METRICS.md).
 

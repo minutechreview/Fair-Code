@@ -11,7 +11,7 @@
 
 This is the public roadmap for Fair Code. It tracks what has been built, what is actively in progress, and what comes next.
 
-*Last updated: September 2026*
+*Last updated: October 2026*
 
 [Where We Are](#where-we-are) · Phase 1 · Phase 2 · Phase 3 · Phase 4 · Phase 5 · Phase 6 · [Content Schedule](#content-schedule) · [How to Contribute](#how-to-contribute)
 
@@ -37,14 +37,15 @@ Fair Code is an open-source responsible AI platform explaining algorithmic bias,
 
 - Current release: **v2.3.0**
 - The next major version can now bundle a re-run benchmark and new audits without waiting on a
-  publication gate - Phase 6 below reflects the earlier plan and will be revisited alongside next
-  year's real paper submission.
+  publication gate. Phase 6 below lists the prerequisites for next year's real paper submission
+  that can start now (a fresh full run, a snapshot diff, a venue decision, and the next freeze
+  trigger).
 
 ---
 
 ## Phase 1 - Bias Glossary and Beginner Explainers ✅
 
-**Status: Foundational library complete - 62 explainers published, past the original 60+ target, working toward 65+**
+**Status: Foundational library complete - 68 explainers published, past the original 60+ target and the 65+ goal, working toward 75+**
 
 Build the foundational vocabulary and explain core fairness concepts clearly enough for a non-technical reader.
 
@@ -86,6 +87,13 @@ Build the foundational vocabulary and explain core fairness concepts clearly eno
 - [x] What Is the Base Rate Fallacy?
 - [x] What Is Reject Inference?
 - [x] What Is a Precision-Recall Curve?
+- [x] What Is Algorithmic Recourse?
+- [x] What Is Max-Min (Rawlsian) Fairness?
+- [x] What Is Distributionally Robust Optimization (DRO) for Fairness?
+- [x] What Is Fairness in Ranking?
+- [x] What Is Reweighing?
+- [x] What Are Group-Specific Thresholds?
+- [x] What Is a Permutation Test for a Fairness Gap?
 
 ---
 
@@ -147,7 +155,7 @@ Goal: grow to 15+ contributors with quality-controlled contributions.
 - [x] CI pipeline (all audit scripts run on push/PR)
 - [x] Good-first-issue and help-wanted labels
 - [x] First-interaction workflow (greets new contributors)
-- [ ] Target: 10–15 labelled issues open at all times (currently 27 - a moving snapshot, not a maintained invariant; no automated mechanism keeps it true over time)
+- [ ] Target: 10–15 labelled issues open at all times (a moving snapshot, not a maintained invariant; no automated mechanism keeps it true over time)
 - [x] Contributor list in README
 - [x] METRICS.md tracking contributor growth weekly
 
@@ -210,11 +218,22 @@ a fresh run of results.
 
 - [x] Freeze benchmark results at tag `v1.0-paper` (commit `bbef2ba`) - kept as a reference snapshot
 - [x] `CLAUDE.md` paper-freeze policy for the benchmark and audits - lifted; will be re-established for next year's real submission
-- [ ] Submit manuscript to peer review (next year, with fresh results)
+- [x] Development reopened: `results/`, audits, and the analysis core are unfrozen; `paper/results-frozen/` stays untouched as the historical reference for this earlier snapshot
+
+**Prerequisites that can start now** (nothing below waits for the submission date):
+
+- [ ] **Fresh full benchmark run on the current lockfile** - rerun `faircode benchmark` on `requirements-lock.txt` and refresh `results/` (tracked in [#1068](https://github.com/yakew7/Fair-Code/issues/1068)). This is the run the paper will be built on, so doing it early shows what moved.
+- [x] **Compare it with the earlier snapshot** - `python3 scripts/diff_results.py` lists every row that moved against `paper/results-frozen/`; explain each flagged row before it goes into a manuscript.
+- [x] **Decide how library bumps are handled** - Dependabot groups the harmless updates and keeps `numpy`, `pandas`, `scikit-learn`, `scipy`, `fairlearn` and `matplotlib` as one PR each, with a benchmark diff before merging (see [CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates)).
+- [ ] **Choose the target venue** - a maintainer decision, to be written here. It sets the page limit, the artifact and reproducibility requirements, and the submission window, so it comes before any manuscript writing. Candidates to weigh are a fairness-and-accountability conference, a datasets-and-benchmarks track, or a journal.
+- [ ] **Define the next freeze trigger** - the freeze starts when all of these hold: the venue is chosen, the full run above is merged, the `audit.yaml` manifests and the seven audits are final for the paper, and a maintainer has tagged the snapshot. Until then the repo stays fully open; when it starts, `CLAUDE.md` and `CONTRIBUTING.md` are updated in the same PR.
+
+**Gated on the submission date** (next year):
+
+- [ ] Submit manuscript to peer review (with the fresh results)
 - [ ] Address reviewer feedback
 - [ ] Paper accepted and published
 - [ ] Add citation and DOI to [README.md](README.md) and [CITATION.cff](CITATION.cff)
-- [x] Development reopened: `results/`, audits, and the analysis core are unfrozen; `paper/results-frozen/` stays untouched as the historical reference for this earlier snapshot
 
 ---
 

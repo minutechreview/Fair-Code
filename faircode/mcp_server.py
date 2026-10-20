@@ -12,7 +12,7 @@ cli.py already wraps. See faircode/SPEC.md section 11 for the tool contract.
 
 Phase 2 (list_explainers, get_explainer, get_benchmark_results) adds
 read-only lookups against package-internal mirrors of this repo's explainers/
-and frozen benchmark results - the plan mentioned in CHANGELOG.md's Phase 1 note.
+and benchmark results (current and the earlier frozen snapshot) - the plan mentioned in CHANGELOG.md's Phase 1 note.
 
 Needs the optional 'mcp' extra (`pip install faircode[mcp]`).
 
@@ -51,7 +51,7 @@ from .provenance import build as build_provenance
 from .provenance import proxy_params
 from .proxy import PROXY_ALPHA, parse_held_out_specs, partition_held_out_path
 from .proxy import proxy_hints as compute_proxy_hints
-from .report import compare_to_csv, to_csv
+from .report import _no_hints_text, compare_to_csv, to_csv
 
 _MAP_CHOICES = VALID_KINDS + ("ignore",)
 
@@ -68,15 +68,26 @@ _MAP_CHOICES = VALID_KINDS + ("ignore",)
 EXPLAINERS_DIR = Path(__file__).resolve().parent / "_explainers"
 EXPLAINERS_DATA_JSON = EXPLAINERS_DIR / "data.json"
 
-# The other half of the Phase 2 plan: read-only lookups against
-# paper/results-frozen/'s benchmark numbers. Reads from _results_frozen/, a
-# package-internal mirror (scripts/freeze_paper_results.py's
-# mirror_for_mcp()) for the same packaging reason as EXPLAINERS_DIR above -
-# paper/ is never shipped by pyproject.toml either.
+# The other half of the Phase 2 plan: read-only lookups against the repo's
+# benchmark numbers. Two sources, each read from a package-internal mirror
+# (scripts/freeze_paper_results.py's mirror_for_mcp() and
+# mirror_current_for_mcp()) for the same packaging reason as EXPLAINERS_DIR
+# above - neither paper/ nor results/ is shipped by pyproject.toml:
+#   "frozen"  - _results_frozen/, the earlier reference snapshot (paper/results-frozen/)
+#   "current" - _results_current/, the live results/ that every rerun updates (#1049)
 RESULTS_FROZEN_DIR = Path(__file__).resolve().parent / "_results_frozen"
+RESULTS_CURRENT_DIR = Path(__file__).resolve().parent / "_results_current"
 RESULTS_FROZEN_FILES = {
     "fairness": RESULTS_FROZEN_DIR / "results_fairness.csv",
     "performance": RESULTS_FROZEN_DIR / "results_performance.csv",
+}
+RESULTS_CURRENT_FILES = {
+    "fairness": RESULTS_CURRENT_DIR / "results_fairness.csv",
+    "performance": RESULTS_CURRENT_DIR / "results_performance.csv",
+}
+RESULTS_SOURCES = {
+    "frozen": (RESULTS_FROZEN_FILES, "paper/results-frozen/", "the earlier reference snapshot"),
+    "current": (RESULTS_CURRENT_FILES, "results/", "the current, live results"),
 }
 _RESULTS_ROW_LIMIT = 200
 # Both frozen CSVs' own precision (float64, 15-17 significant digits) isn't
@@ -397,6 +408,10 @@ def _proxy_hints_impl(path, overrides=None, held_out_with=None, alpha=None,
     if sheet_notes:
         output["sheet_notes"] = sheet_notes   # deprecated alias of the sheet entries in `notes` (#950)
     notes = sheet_notes + [n for n in (encoding_ignored_note(path, encoding),) if n] + held_notes
+    if not output["hints"]:
+        # "tested, none found" and "no pair could be tested" are different answers (#1044); a held-out
+        # column is compared with every dimension, so it counts toward the two a pair needs.
+        notes.append(_no_hints_text(len(result["dimensions"]) + len(held_out or {})))
     if notes:
         output["notes"] = notes
     _flag_deprecated_aliases(output)
@@ -474,9 +489,13 @@ def _get_explainer_impl(slug):
 
 
 def _get_benchmark_results_impl(kind="fairness", audit=None, model=None, strategy=None,
-                                metric=None, protected_attribute=None):
-    """Filters the frozen benchmark CSV named by `kind` ("fairness" or
-    "performance") down to rows matching every given (non-None) filter.
+                                metric=None, protected_attribute=None, source="frozen"):
+    """Filters the benchmark CSV named by `kind` ("fairness" or
+    "performance") in the chosen `source` ("frozen": the earlier reference
+    snapshot in paper/results-frozen/; "current": the live results/) down to
+    rows matching every given (non-None) filter. The result names which
+    source it came from, so a quoted number can say whether it is current or
+    the reference snapshot (#1049).
     A filter that names a column the chosen `kind` doesn't have (e.g.
     `protected_attribute` against results_performance.csv, which has no
     such column) raises ValueError rather than being silently ignored, so
@@ -488,14 +507,20 @@ def _get_benchmark_results_impl(kind="fairness", audit=None, model=None, strateg
     context - `total_matches`/`truncated` tell it whether to narrow the
     query. NaN cells (e.g. results_performance.csv's AUC rows have no
     ci_low/ci_high) become JSON `null`, never a literal NaN token."""
-    path = RESULTS_FROZEN_FILES.get(kind)
+    if source not in RESULTS_SOURCES:
+        raise ValueError(f"source must be one of {sorted(RESULTS_SOURCES)}, got {source!r}")
+    files, origin, _ = RESULTS_SOURCES[source]
+    path = files.get(kind)
     if path is None:
-        raise ValueError(f"kind must be one of {sorted(RESULTS_FROZEN_FILES)}, got {kind!r}")
+        raise ValueError(f"kind must be one of {sorted(files)}, got {kind!r}")
     if not path.is_file():
+        mirror = "mirror_for_mcp" if source == "frozen" else "mirror_current_for_mcp"
         raise FileNotFoundError(
-            f"{path} not found - restore the package mirror from paper/results-frozen/ "
-            "with `scripts.freeze_paper_results.mirror_for_mcp()`")
+            f"{path} not found - restore the package mirror from {origin} "
+            f"with `scripts.freeze_paper_results.{mirror}()`")
     df = pd.read_csv(path)
+    unfiltered = df
+    notes = []
     for column, value in (("audit", audit), ("model", model), ("strategy", strategy),
                           ("metric", metric), ("protected_attribute", protected_attribute)):
         if value is None:
@@ -508,6 +533,21 @@ def _get_benchmark_results_impl(kind="fairness", audit=None, model=None, strateg
                 f"(available: {', '.join(df.columns)}); it cannot be used as a "
                 f"filter for this kind"
             )
+        # A value that matches none of the column's values (e.g. the lowercase
+        # audit names mean audit="COMPAS" finds nothing) otherwise returns an
+        # empty result an agent can misread as "no data" (#1041). Name the valid
+        # values, and point out a case-only mismatch, without failing the call.
+        valid = unfiltered[column].dropna().unique().tolist()
+        if value not in valid:
+            available = ", ".join(str(v) for v in sorted(valid, key=str))
+            hint = ""
+            if isinstance(value, str):
+                case_match = [v for v in valid
+                              if isinstance(v, str) and v.lower() == value.lower()]
+                if case_match:
+                    hint = (f" (values are case-sensitive; "
+                            f"did you mean {case_match[0]!r}?)")
+            notes.append(f"{column} {value!r} not found; available: {available}{hint}")
         df = df[df[column] == value]
     total = len(df)
     for column in _RESULTS_NUMERIC_COLUMNS:
@@ -515,7 +555,11 @@ def _get_benchmark_results_impl(kind="fairness", audit=None, model=None, strateg
             df[column] = df[column].round(_RESULTS_ROUND_DECIMALS)
     head = df.head(_RESULTS_ROW_LIMIT).astype(object)
     rows = head.where(head.notna(), None).to_dict(orient="records")
-    return {"results": rows, "total_matches": total, "truncated": total > len(rows)}
+    result = {"source": source, "results": rows, "total_matches": total,
+              "truncated": total > len(rows)}
+    if notes:
+        result["notes"] = notes
+    return result
 
 
 def build_server():
@@ -534,8 +578,8 @@ def build_server():
             "locally, no data leaves this machine. Wraps the same faircode "
             "Python API the `faircode` CLI uses. Also exposes read-only "
             "lookups against this repo's published explainers "
-            "(list_explainers, get_explainer) and frozen benchmark results "
-            "(get_benchmark_results)."
+            "(list_explainers, get_explainer) and benchmark results, current or "
+            "the earlier frozen snapshot (get_benchmark_results)."
         ),
     )
 
@@ -786,10 +830,16 @@ def build_server():
     def get_benchmark_results(kind: str = "fairness", audit: str | None = None,
                               model: str | None = None, strategy: str | None = None,
                               metric: str | None = None,
-                              protected_attribute: str | None = None) -> dict:
-        """Query this repo's frozen benchmark results (`paper/results-frozen/`)
-        - the numbers actually cited for each of the seven audits - without
-        shelling out or parsing CSV.
+                              protected_attribute: str | None = None,
+                              source: str = "frozen") -> dict:
+        """Query this repo's benchmark results for each of the seven audits,
+        without shelling out or parsing CSV.
+
+        `source` picks the result set: "frozen" (default) is the earlier
+        reference snapshot in `paper/results-frozen/`, kept as a point of
+        comparison; "current" is the live `results/`, which changes on every
+        rerun. The returned `source` field says which one answered, so a
+        quoted number can name its origin.
 
         `kind` is "fairness" (default; demographic_parity_diff,
         equalized_odds_diff, etc. per protected attribute) or "performance"
@@ -802,14 +852,20 @@ def build_server():
         ignored, so a mistaken filter can't come back looking like an
         unfiltered result.
 
-        Returns {"results": [...], "total_matches": N, "truncated": bool} -
+        Filter values are matched case-sensitively and the audit names are
+        lowercase (e.g. "compas"), so a value that matches nothing returns an
+        empty result with a `notes` entry naming that column's valid values,
+        rather than a bare empty result a caller could misread as "no data."
+
+        Returns {"source": "frozen"|"current", "results": [...],
+        "total_matches": N, "truncated": bool} -
         results are capped at 200 rows even when more match, so narrow the
         query with more filters if `truncated` is true rather than assuming
         the first 200 are representative.
         """
         try:
             return _get_benchmark_results_impl(kind, audit, model, strategy, metric,
-                                               protected_attribute)
+                                               protected_attribute, source)
         except (ValueError, FileNotFoundError) as exc:
             raise _as_tool_error(exc) from exc
 

@@ -269,8 +269,11 @@
   // Handles quoted fields, escaped quotes (""), and newlines inside quotes.
   // pandas renames a repeated header to name.1, name.2, ... (skipping any name
   // already taken); without this the second copy overwrote the first in every
-  // row object and both dimensions read the LAST column's values (#834).
+  // row object and both dimensions read the LAST column's values (#834). A blank
+  // header cell is named "Unnamed: N" (N = zero-based column index) first, as pandas
+  // does, so the column has the same name in both engines (#1046).
   function dedupeHeaders(columns) {
+    columns = columns.map(function (c, i) { return c === '' ? 'Unnamed: ' + i : c; });
     var used = Object.create(null), seen = Object.create(null);
     columns.forEach(function (c) { used[c] = (used[c] || 0) + 1; });
     var taken = Object.create(null);
@@ -601,12 +604,38 @@
   // union-of-columns table builder as parseJSON. SheetJS isn't bundled into
   // this file since it's a large third-party library with its own license -
   // profiler.html loads it from a pinned CDN URL only when needed.
+  // A workbook date cell is a datetime to pandas, so its label is "2020-01-01 00:00:00"; SheetJS
+  // with raw: true returned the Excel serial number (43831) instead (#1039). Date cells are
+  // rewritten to that text before sheet_to_json, from the serial's own calendar parts rather than
+  // a JS Date, so the label does not depend on the machine's time zone. A time-only cell prints
+  // as "HH:MM:SS", like Python's datetime.time.
+  function formatXlsxDateCell(serial) {
+    var c = global.XLSX.SSF.parse_date_code(serial);
+    if (!c) return null;
+    function p(n, w) { n = String(n); while (n.length < (w || 2)) n = '0' + n; return n; }
+    var time = p(c.H) + ':' + p(c.M) + ':' + p(Math.floor(c.S));
+    if (serial < 1) return time;
+    return p(c.y, 4) + '-' + p(c.m) + '-' + p(c.d) + ' ' + time;
+  }
+
+  function stringifyXlsxDateCells(sheet) {
+    Object.keys(sheet).forEach(function (addr) {
+      if (addr.charAt(0) === '!') return;
+      var cell = sheet[addr];
+      if (cell && cell.t === 'n' && typeof cell.v === 'number' && cell.z &&
+          global.XLSX.SSF.is_date(cell.z)) {
+        var text = formatXlsxDateCell(cell.v);
+        if (text !== null) sheet[addr] = { t: 's', v: text, w: text };
+      }
+    });
+  }
+
   async function parseXLSX(arrayBuffer) {
     await loadSheetJS();
 
     var workbook;
     try {
-      workbook = global.XLSX.read(arrayBuffer, { type: "array" });
+      workbook = global.XLSX.read(arrayBuffer, { type: "array", cellNF: true });
     } catch (readErr) {
       throw new Error("Unsupported .xlsx file (" + readErr.message + ").");
     }
@@ -615,6 +644,7 @@
     if (!sheetName) return { table: { columns: [], rows: [] }, ignoredSheets: [], sheetName: null };
 
     var sheet = workbook.Sheets[sheetName];
+    stringifyXlsxDateCells(sheet);
     var records = global.XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
 
     if (records.length === 0) {
@@ -1751,6 +1781,28 @@
     return flags;
   }
 
+  // Collapse per-group flags of one kind past FLAG_GROUP_CAP into one summary
+  // line, placed where the first collapsed flag would have been (#1043).
+  // entries: [{kind, text, count}] in group order. Mirrors _summarise_group_flags.
+  var FLAG_GROUP_CAP = 10;
+  function summariseGroupFlags(entries, summaries) {
+    var totals = Object.create(null), maxCount = Object.create(null);
+    entries.forEach(function (e) {
+      totals[e.kind] = (totals[e.kind] || 0) + 1;
+      if (!(e.kind in maxCount) || e.count > maxCount[e.kind]) maxCount[e.kind] = e.count;
+    });
+    var out = [], done = Object.create(null);
+    entries.forEach(function (e) {
+      if (totals[e.kind] <= FLAG_GROUP_CAP) {
+        out.push(e.text);
+      } else if (!done[e.kind]) {
+        done[e.kind] = true;
+        out.push(summaries[e.kind](totals[e.kind], maxCount[e.kind]));
+      }
+    });
+    return out;
+  }
+
   function buildFlags(dimensions, inters, imbalanceFlag, missingFlag, maxAge) {
     if (imbalanceFlag === undefined) imbalanceFlag = IMBALANCE_FLAG;
     if (missingFlag === undefined) missingFlag = MISSING_FLAG;
@@ -1758,25 +1810,34 @@
     var flags = [];
     dimensions.forEach(function (d) {
       var foldedLabels = Object.create(null);
+      var under = Object.create(null);  // object lookup: indexOf made this quadratic (#1042)
+      d.under_represented.forEach(function (l) { under[l] = true; });
+      var entries = [];
       d.groups.forEach(function (g) {
         var folded = foldKeyCase(g.label.replace(KEY_TRIM, ''));
         if (Object.prototype.hasOwnProperty.call(foldedLabels, folded)) {
-          flags.push(d.name + ": '" + foldedLabels[folded] + "' and '" + g.label +
-                     "' differ only in case or spacing");
+          entries.push({kind: 'case', count: 0, text: d.name + ": '" + foldedLabels[folded] + "' and '" + g.label +
+                     "' differ only in case or spacing"});
         } else {
           foldedLabels[folded] = g.label;
         }
-        if (d.under_represented.indexOf(g.label) !== -1) {
-          flags.push(d.name + ": '" + g.label + "' is under-represented (" +
-                     (g.share * 100).toFixed(1) + '%)');
+        if (under[g.label] === true) {
+          entries.push({kind: 'under', count: 0, text: d.name + ": '" + g.label + "' is under-represented (" +
+                     (g.share * 100).toFixed(1) + '%)'});
         }
         if (g.small_group) {
-          flags.push(
+          entries.push({kind: 'small', count: g.count, text:
             d.name + ": '" + g.label + "' has only " +
-            g.count + " rows; fairness metrics may be unreliable"
-          );
+            g.count + " rows; fairness metrics may be unreliable"});
         }
       });
+      flags = flags.concat(summariseGroupFlags(entries, {
+        'case': function (n) { return d.name + ': ' + n + ' pairs of labels differ only in case or spacing'; },
+        under: function (n) { return d.name + ': ' + n + ' groups are under-represented'; },
+        small: function (n, c) {
+          return d.name + ': ' + n + ' groups have only ' + c + ' rows or fewer; fairness metrics may be unreliable';
+        }
+      }));
       if (d.imbalance_ratio !== null && d.imbalance_ratio >= imbalanceFlag) {
         flags.push(d.name + ': imbalance ratio ' + d.imbalance_ratio.toFixed(1) +
                    '× between largest and smallest group');
@@ -1801,10 +1862,15 @@
     });
     inters.forEach(function (inter) {
       var a = inter.dims[0], b = inter.dims[1];
-      inter.cells.forEach(function (cell) {
+      var entries = inter.cells.map(function (cell) {
         var kind = cell.count === 0 ? 'absent' : 'only ' + cell.count + ' rows';
-        flags.push(a + "='" + cell.a + "' × " + b + "='" + cell.b + "' is " + kind);
+        return {kind: cell.count === 0 ? 'absent' : 'thin', count: cell.count,
+                text: a + "='" + cell.a + "' × " + b + "='" + cell.b + "' is " + kind};
       });
+      flags = flags.concat(summariseGroupFlags(entries, {
+        absent: function (n) { return a + ' × ' + b + ': ' + n + ' combinations are absent'; },
+        thin: function (n, c) { return a + ' × ' + b + ': ' + n + ' combinations have only ' + c + ' rows or fewer'; }
+      }));
     });
     return flags;
   }
@@ -2245,18 +2311,19 @@
                    ' representation drift (PSI ' + cd.psi.toFixed(2) + ')');
         driftDetected = true;
       }
-      cd.groups.forEach(function (g) {
-        if (g.status === 'appeared') {
-          flags.push(cd.name + ": '" + g.label + "' appeared (" +
-                     (g.share_a * 100).toFixed(1) + '% → ' +
-                     (g.share_b * 100).toFixed(1) + '%)');
-          driftDetected = true;
-        } else if (g.status === 'disappeared') {
-          flags.push(cd.name + ": '" + g.label + "' disappeared (" +
-                     (g.share_a * 100).toFixed(1) + '% → ' +
-                     (g.share_b * 100).toFixed(1) + '%)');
-          driftDetected = true;
+      ['appeared', 'disappeared'].forEach(function (status) {
+        var moved = cd.groups.filter(function (g) { return g.status === status; });
+        if (!moved.length) return;
+        driftDetected = true;
+        if (moved.length > FLAG_GROUP_CAP) {
+          flags.push(cd.name + ': ' + moved.length + ' groups ' + status);
+          return;
         }
+        moved.forEach(function (g) {
+          flags.push(cd.name + ": '" + g.label + "' " + status + ' (' +
+                     (g.share_a * 100).toFixed(1) + '% → ' +
+                     (g.share_b * 100).toFixed(1) + '%)');
+        });
       });
     });
     added.forEach(function (n) { flags.push("dimension '" + n + "' is present only in " + nameB); driftDetected = true; });

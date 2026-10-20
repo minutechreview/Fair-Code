@@ -12931,3 +12931,825 @@ If all suggested actionable recourses for one group are consistently more diffic
 ---
 *Part of [The Fair Code Project](https://instagram.com/thefaircodeproject) - exposing and fixing algorithmic bias with real data and open code.*
 
+---
+
+# Max-Min (Rawlsian) Fairness
+URL: https://www.thefaircode.xyz/explainers/maxmin-fairness.html
+Summary: Learn why parity metrics and Rawls' difference principle can disagree: a model can lift the worst-off group and still widen a parity gap. See a worst-group reweighting loop on Benefits Denial, what it does to every other group, and why a minimum group size is not optional.
+
+> *Parity asks whether groups are treated alike. Max-min fairness asks a different question: how well off is the worst-off group, and can we make that better?*
+
+## The One-Sentence Definition
+
+**Max-min (Rawlsian) fairness** judges a model by its worst-off group, not by whether groups match each other: among all models, prefer the one that makes the minimum group-level outcome as good as possible.
+
+## Why It Matters
+
+Every parity metric in this repo ([Demographic Parity](demographic-parity.md), [Equalized Odds](equalized-odds.md), [Predictive Parity](predictive-parity.md)) compares groups with each other. A model can pass all of them by making everyone equally badly off. Parity has no opinion on the level, only on the gap.
+
+Max-min fairness comes from John Rawls' difference principle in *A Theory of Justice* (1971): inequalities are acceptable only if they work to the benefit of the least advantaged. It flips the priority. A model that lifts the worst group from 75.7% to 77.0% accuracy is better under max-min, even if the groups end up further apart. That is a real conflict with the parity family, and [Fairness Metric Conflicts](fairness-metric-conflicts.md) does not cover it, because it only compares parity-style metrics against each other.
+
+## Core Concept: Minimize the Maximum Group Loss
+
+Demographic parity constrains a rate: the positive-prediction rate must match across groups. Max-min changes the objective instead of adding a constraint.
+
+```
+parity:   minimize overall loss   subject to   rate(group A) = rate(group B)
+max-min:  minimize   max over groups g of   loss(g)
+```
+
+The second line has no fairness constraint at all. It has a different definition of "best": the model whose worst group does best. Two choices decide everything:
+
+1. **What "loss" means.** Error rate, log-loss and false-negative rate can rank the same groups in different orders.
+2. **Which groups are allowed to be "worst".** A group of 12 rows will have a wild error rate by chance. Without a minimum group size, the objective chases noise.
+
+A simple way to optimize it is iterative reweighting: train, find the group with the highest error, give its rows more weight, retrain, repeat.
+
+## Concrete Example: Benefits Denial
+
+This uses the [Benefits Denial](../Benefits%20Denial/) audit (UCI Adult, income above 50K as the eligibility proxy), a logistic regression on the audit's core features with sex and race left out of the inputs, and four groups: sex crossed with race. The test split is the benchmark's own (20%, `random_state=42`).
+
+```
+baseline  overall 0.811 | male, White/Asian 0.757 | male, other race 0.872 | female, White/Asian 0.894 | female, other race 0.938 | worst group 0.757 | sex parity gap -0.0509
+max-min   overall 0.811 | male, White/Asian 0.770 | male, other race 0.852 | female, White/Asian 0.874 | female, other race 0.914 | worst group 0.770 | sex parity gap -0.0563
+group weights [11.39  1.    1.    1.  ]
+```
+
+Read it against the benchmark's own rows in `results/` (the current results, not the frozen snapshot). The baseline here is the benchmark's S2 strategy (`unawareness_proxy_removal`): 0.811 accuracy and a sex parity gap of -0.0509. The in-processing strategy S3 (Fairlearn's `ExponentiatedGradient`, a parity constraint) reaches a gap of -0.0219 at 0.784 accuracy.
+
+| Model | Overall accuracy | Worst group accuracy | Sex parity gap |
+|-------|:-:|:-:|:-:|
+| Baseline (S2) | 0.811 | 0.757 | -0.0509 |
+| Max-min reweighting | 0.811 | 0.770 | -0.0563 |
+| Parity constraint (S3, from `results/`) | 0.784 | not computed | -0.0219 |
+
+Three things to notice:
+
+- **The worst-off group by accuracy is the largest one** (male, White or Asian: 4,008 of 6,513 test rows), not a small or marginalized one. Accuracy is the loss here, so that is what "worst off" means. Pick a different loss and the answer changes.
+- **The worst group gained 1.3 points and everyone else lost some**: the female groups dropped from 0.894 and 0.938 to 0.874 and 0.914. Overall accuracy did not move.
+- **The parity gap got slightly wider** (-0.0509 to -0.0563). The max-min model did better by its own measure and worse by demographic parity's.
+
+## Detection/Implementation Code
+
+Run from the repo root (`PYTHONPATH=. python3 maxmin.py`). `_load_dataset` is the loader the benchmark harness uses, so the split matches `results/`.
+
+```python
+import numpy as np
+from sklearn.model_selection import train_test_split
+from faircode.manifest import load_manifest
+from faircode.benchmark import _load_dataset      # the loader the benchmark harness uses
+from faircode.strategies import encode_features
+from faircode.models import build_model
+
+def load_audit(folder):
+    manifest = load_manifest(f"{folder}/audit.yaml")
+    df, y, masks = _load_dataset(manifest)        # masks[name] is 1 for the disadvantaged group
+    columns = list(dict.fromkeys(manifest.core_features))   # S2 feature set: no protected columns, no proxies
+    X = encode_features(df, columns)
+    train, test = train_test_split(np.arange(len(df)), test_size=manifest.test_size,
+                                   random_state=manifest.random_state, stratify=y)
+    return manifest, X, y, {k: v.to_numpy() for k, v in masks.items()}, train, test
+
+manifest, X, y, masks, train, test = load_audit("Benefits Denial")
+group = masks["sex"] * 2 + masks["race"]     # 0 male White/Asian, 1 male other race, 2 female White/Asian, 3 female other race
+labels = ["male, White/Asian", "male, other race", "female, White/Asian", "female, other race"]
+X_tr, X_te = X.iloc[train], X.iloc[test]
+y_tr, y_te = y.iloc[train].to_numpy(), y.iloc[test].to_numpy()
+g_tr, g_te = group[train], group[test]
+
+def fit(sample_weight=None):
+    model = build_model("logistic_regression", manifest.random_state)
+    return model.fit(X_tr, y_tr, sample_weight=sample_weight)
+
+def group_error(model, floor=30):
+    wrong = model.predict(X_tr) != y_tr
+    # groups under `floor` training rows are never "the worst off": a tiny group's error is noise
+    return np.array([wrong[g_tr == k].mean() if (g_tr == k).sum() >= floor else -1.0 for k in range(4)])
+
+def maxmin_fit(rounds=6, step=1.5):
+    weight = np.ones(4)
+    model = fit()
+    for _ in range(rounds):
+        weight[group_error(model).argmax()] *= step      # push weight onto whoever is worst off right now
+        w = weight[g_tr]
+        model = fit(w / w.mean())
+    return model, weight
+
+def summarise(model, name):
+    pred = model.predict(X_te)
+    correct = pred == y_te
+    by_group = [correct[g_te == k].mean() for k in range(4)]
+    parity_gap = pred[masks["sex"][test] == 1].mean() - pred[masks["sex"][test] == 0].mean()
+    print(f"{name:9s} overall {correct.mean():.3f} | " +
+          " | ".join(f"{lab} {acc:.3f}" for lab, acc in zip(labels, by_group)) +
+          f" | worst group {min(by_group):.3f} | sex parity gap {parity_gap:+.4f}")
+
+summarise(fit(), "baseline")
+model, weight = maxmin_fit()
+summarise(model, "max-min")
+print("group weights", np.round(weight, 2))
+```
+
+`floor=30` mirrors the `small_sample_warning` threshold in `faircode/significance.py` (fewer than 30 rows): a group that small is never allowed to be "the worst".
+
+## Limitations
+
+1. **Tiny groups dominate without a floor.** The worst-case group is the noisiest one. A minimum group size, as in the profiler's small-group warning, is not optional.
+2. **"Worst off" needs a loss, and the loss is a choice.** Accuracy, false-negative rate and log-loss can crown different groups. The Rawlsian argument says nothing about which to use.
+3. **It can widen a parity gap, as it did here.** If your legal or policy standard is a parity metric, max-min can move you the wrong way. This is a trade-off, not a free improvement.
+4. **It needs group labels at training time**, and the groups have to be defined up front. [Distributionally Robust Optimization](distributionally-robust-optimization.md) relaxes this, at the cost of a free parameter.
+5. **The gain is small when the model is already near its ceiling.** A 1.3-point lift on the worst group cost the other groups 2 to 2.4 points. Whether that is a good deal is a values question, not a statistics one.
+
+## Related Concepts
+
+* [Fairness Metric Conflicts](fairness-metric-conflicts.md) - why parity metrics cannot all hold, and why max-min adds one more axis
+* [Mitigation Strategies](mitigation-strategies.md) - the benchmark's constraint-based in-processing strategy that max-min is contrasted with
+* [Class Imbalance](class-imbalance.md) - the same reweighting mechanics, applied to groups instead of labels
+* [Distributionally Robust Optimization](distributionally-robust-optimization.md) - the smooth, soft version of the same worst-case idea
+* [Subgroup Fairness](subgroup-fairness.md) - why the choice of groups matters
+
+## Related Projects in This Repo
+
+* [`Benefits Denial/`](../Benefits%20Denial/) - the audit used for the example above
+* [`results/`](../results/) - the benchmark rows quoted for S2 and S3
+
+## Further Reading
+
+* Rawls, J. (1971). *A Theory of Justice.* Harvard University Press - the difference principle behind max-min fairness.
+* [Hashimoto, T., Srivastava, M., Namkoong, H., Liang, P. (2018): Fairness Without Demographics in Repeated Loss Minimization](https://arxiv.org/abs/1806.08010) - ICML 2018; controls the worst-case group risk without needing group labels.
+* [Martinez, N., Bertran, M., Sapiro, G. (2020): Minimax Pareto Fairness: A Multi Objective Perspective](https://proceedings.mlr.press/v119/martinez20a.html) - ICML 2020; minimizes the worst group's risk along the Pareto frontier.
+
+---
+*Part of [The Fair Code Project](https://instagram.com/thefaircodeproject) - exposing and fixing algorithmic bias with real data and open code.*
+
+---
+
+# Distributionally Robust Optimization (DRO) for Fairness
+URL: https://www.thefaircode.xyz/explainers/distributionally-robust-optimization.html
+Summary: Learn how group DRO trains against an adversary that shifts weight onto whichever group the model currently fails, and how it differs from a parity-constrained method like ExponentiatedGradient. See the real worst-group gain on Benefits Denial, the cost to the other groups, and how the step size over-hedges.
+
+> *A fairness constraint needs you to name the metric and the groups in advance. Distributionally robust optimization hedges against the worst group instead, and asks only that you can find it.*
+
+## The One-Sentence Definition
+
+**Distributionally robust optimization (DRO)** trains a model to minimize its worst-case loss over a set of plausible data distributions, and in its group form that set is "any reweighting of the groups", so the model is pushed to do well on whichever group it is currently failing.
+
+## Why It Matters
+
+[Mitigation Strategies](mitigation-strategies.md) describes this repo's in-processing strategy, S3: Fairlearn's `ExponentiatedGradient`. It optimizes accuracy subject to a fairness constraint such as demographic parity. That has two requirements: you decide on the metric before training, and the constraint must be about the group you thought to check.
+
+If the group that is actually harmed is not the one you constrained, a parity constraint does nothing for it. DRO has no parity target at all. It asks for a model whose loss does not blow up on any group, which can help when the harmed subgroup is one you did not think of, as long as it is among the groups you can define and measure.
+
+## Core Concept: Min-Max Instead of Constrained Minimization
+
+```
+constraint (S3):  minimize loss   subject to   parity gap <= epsilon
+group DRO:        minimize   max over weightings q of   sum_g q_g * loss(g)
+```
+
+The inner maximum is an adversary that moves weight onto the group with the highest loss. The outer minimum is the model fitting against that adversary. In the simplified loop below, the adversary updates its weights exponentially:
+
+```
+q_g  <-  q_g * exp(eta * loss_g)      then renormalize
+```
+
+`eta` is the free parameter. A small `eta` is a mild hedge. A large `eta` lets the adversary put almost all the weight on one group, and the model over-hedges against it. A related idea, [Max-Min (Rawlsian) Fairness](maxmin-fairness.md), uses hard error and fixed weight steps. DRO uses a smooth loss and a soft, exponentially updated weighting.
+
+## Concrete Example: Benefits Denial
+
+Same audit and feature set as the other explainers in this group: [Benefits Denial](../Benefits%20Denial/), logistic regression on the core features, benchmark split. Four groups this time: sex crossed with age (55 and over).
+
+```
+baseline     accuracy 0.811 | per-group log-loss male <55 0.482 male 55+ 0.593 female <55 0.320 female 55+ 0.315 | worst 0.593 | sex parity gap -0.0509
+DRO eta=0.5  accuracy 0.807 | per-group log-loss male <55 0.481 male 55+ 0.549 female <55 0.375 female 55+ 0.360 | worst 0.549 | sex parity gap -0.0569
+             adversary's group weights [0.325 0.573 0.054 0.048]
+DRO eta=1.0  accuracy 0.810 | per-group log-loss male <55 0.485 male 55+ 0.542 female <55 0.396 female 55+ 0.379 | worst 0.542 | sex parity gap -0.0697
+             adversary's group weights [0.271 0.707 0.013 0.009]
+DRO eta=2.0  accuracy 0.809 | per-group log-loss male <55 0.489 male 55+ 0.539 female <55 0.409 female 55+ 0.390 | worst 0.539 | sex parity gap -0.0664
+             adversary's group weights [0.166 0.833 0.001 0.   ]
+test group sizes [3710  650 1859  294]
+```
+
+The baseline is the benchmark's S2 strategy in `results/` (the current results): accuracy 0.811, sex parity gap -0.0509. S3, the parity-constrained model, gets a gap of -0.0219 at 0.784 accuracy.
+
+| Model | Accuracy | Worst-group log-loss | Sex parity gap |
+|-------|:-:|:-:|:-:|
+| Baseline (S2) | 0.811 | 0.593 (male 55+) | -0.0509 |
+| Group DRO, eta 0.5 | 0.807 | 0.549 | -0.0569 |
+| Group DRO, eta 1.0 | 0.810 | 0.542 | -0.0697 |
+| Group DRO, eta 2.0 | 0.809 | 0.539 | -0.0664 |
+| Parity constraint (S3, from `results/`) | 0.784 | not computed | -0.0219 |
+
+What it did and did not do:
+
+- **The worst group improved** (male 55+ log-loss 0.593 to 0.539-0.549) at almost no cost to overall accuracy.
+- **The other groups paid for it.** Female under 55 went from 0.320 to 0.375-0.409. The adversary put 83% of the weight on male 55+ at `eta=2.0` and nearly 0% on women, which is what over-hedging looks like.
+- **Parity got worse** (-0.0509 to as far as -0.0697). DRO never looked at it. If sex parity is the legal standard, S3's constraint is the tool, and DRO is not.
+
+## Detection/Implementation Code
+
+Run from the repo root (`PYTHONPATH=. python3 dro.py`).
+
+```python
+import numpy as np
+from sklearn.model_selection import train_test_split
+from faircode.manifest import load_manifest
+from faircode.benchmark import _load_dataset      # the loader the benchmark harness uses
+from faircode.strategies import encode_features
+from faircode.models import build_model
+
+def load_audit(folder):
+    manifest = load_manifest(f"{folder}/audit.yaml")
+    df, y, masks = _load_dataset(manifest)        # masks[name] is 1 for the disadvantaged group
+    columns = list(dict.fromkeys(manifest.core_features))   # S2 feature set: no protected columns, no proxies
+    X = encode_features(df, columns)
+    train, test = train_test_split(np.arange(len(df)), test_size=manifest.test_size,
+                                   random_state=manifest.random_state, stratify=y)
+    return manifest, X, y, {k: v.to_numpy() for k, v in masks.items()}, train, test
+from sklearn.metrics import log_loss
+
+manifest, X, y, masks, train, test = load_audit("Benefits Denial")
+group = masks["sex"] * 2 + masks["age"]      # 0 male under 55, 1 male 55+, 2 female under 55, 3 female 55+
+labels = ["male <55", "male 55+", "female <55", "female 55+"]
+X_tr, X_te = X.iloc[train], X.iloc[test]
+y_tr, y_te = y.iloc[train].to_numpy(), y.iloc[test].to_numpy()
+g_tr, g_te = group[train], group[test]
+
+def fit(sample_weight=None):
+    model = build_model("logistic_regression", manifest.random_state)
+    return model.fit(X_tr, y_tr, sample_weight=sample_weight)
+
+def group_loss(model, X_, y_, g_):
+    p = model.predict_proba(X_)[:, 1]
+    return np.array([log_loss(y_[g_ == k], p[g_ == k], labels=[0, 1]) for k in range(4)])
+
+def group_dro(rounds=25, eta=1.0):
+    n = np.bincount(g_tr, minlength=4)
+    q = np.ones(4) / 4                                  # weight on each group: the adversary's choice
+    model = fit()
+    for _ in range(rounds):
+        q = q * np.exp(eta * group_loss(model, X_tr, y_tr, g_tr))   # raise weight where loss is high
+        q /= q.sum()
+        w = (q / n)[g_tr]                               # per-row weight = group weight / group size
+        model = fit(w / w.mean())
+    return model, q
+
+def summarise(model, name):
+    pred = model.predict(X_te)
+    loss = group_loss(model, X_te, y_te, g_te)
+    parity_gap = pred[masks["sex"][test] == 1].mean() - pred[masks["sex"][test] == 0].mean()
+    print(f"{name:12s} accuracy {(pred == y_te).mean():.3f} | per-group log-loss " +
+          " ".join(f"{lab} {v:.3f}" for lab, v in zip(labels, loss)) +
+          f" | worst {loss.max():.3f} | sex parity gap {parity_gap:+.4f}")
+
+summarise(fit(), "baseline")
+for eta in (0.5, 1.0, 2.0):
+    model, q = group_dro(eta=eta)
+    summarise(model, f"DRO eta={eta}")
+    print("             adversary's group weights", np.round(q, 3))
+print("test group sizes", np.bincount(g_te, minlength=4))
+```
+
+## Limitations
+
+1. **The size of the uncertainty set is a free parameter.** Too small and nothing changes. Too large and the model hedges against a group that is not really that bad. The table above shows the loss plateauing from `eta=1.0` to `2.0` while the other groups keep paying.
+2. **It still needs group labels during training.** DRO does not optimize a parity metric, but the groups in the inner maximum are defined by labels you must have. Methods that infer groups exist, but this simplified version does not.
+3. **It optimizes loss, not a fairness definition.** Lower worst-group loss does not imply a smaller parity gap, a smaller equalized-odds gap or any legal standard being met.
+4. **Overparameterized models make it harder.** The original group-DRO paper found that on large neural networks that fit the training data perfectly, worst-group performance needs strong regularization to improve. A logistic regression, as here, does not have that problem, but a deep model will.
+5. **Small groups produce noisy adversaries.** A group with a few dozen rows has an unstable loss estimate, and the exponentiated weights will chase it. Pair it with a minimum group size, as in [Class Imbalance](class-imbalance.md).
+
+## Related Concepts
+
+* [Mitigation Strategies](mitigation-strategies.md) - S3, the constraint-based in-processing approach this is contrasted with
+* [Fairness-Accuracy Trade-off](fairness-accuracy-tradeoff.md) - the price of every method here
+* [Class Imbalance](class-imbalance.md) - the same reweighting mechanics, applied to groups
+* [Max-Min (Rawlsian) Fairness](maxmin-fairness.md) - the hard-error version of the worst-group objective
+* [Distribution Shift](distribution-shift.md) - the reason a worst-case distribution is worth hedging against
+
+## Related Projects in This Repo
+
+* [`Benefits Denial/`](../Benefits%20Denial/) - the audit used for the example above
+* [`results/`](../results/) - the benchmark rows quoted for S2 and S3
+
+## Further Reading
+
+* [Sagawa, S., Koh, P. W., Hashimoto, T., Liang, P. (2020): Distributionally Robust Neural Networks for Group Shifts: On the Importance of Regularization for Worst-Case Generalization](https://arxiv.org/abs/1911.08731) - ICLR 2020; the group-DRO formulation and the regularization finding.
+* [Duchi, J., Namkoong, H. (2021): Learning Models with Uniform Performance via Distributionally Robust Optimization](https://arxiv.org/abs/1810.08750) - Annals of Statistics 49(3); the general theory of DRO as a route to uniform performance.
+* [Hashimoto, T., Srivastava, M., Namkoong, H., Liang, P. (2018): Fairness Without Demographics in Repeated Loss Minimization](https://arxiv.org/abs/1806.08010) - ICML 2018; DRO used to limit worst-group error when groups are unknown.
+
+---
+*Part of [The Fair Code Project](https://instagram.com/thefaircodeproject) - exposing and fixing algorithmic bias with real data and open code.*
+
+---
+
+# Fairness in Ranking
+URL: https://www.thefaircode.xyz/explainers/fairness-in-ranking.html
+Summary: Learn why classification metrics cannot see the harm of an ordered list, and how exposure, a position-weighted measure of attention, can. See a hiring ranking on AI Fair Recruitment where whole-list exposure looks fair (0.955) while the top-1,000 shortlist gives women 0.107 of men's exposure.
+
+> *A model can score two candidates almost the same and still bury one of them on page three. Classification fairness metrics cannot see that harm, because it only exists once you add position.*
+
+## The One-Sentence Definition
+
+**Fairness in ranking** asks whether groups receive their fair share of *exposure* - the attention an item gets from its position in an ordered list - not just whether they receive similar scores.
+
+## Why It Matters
+
+Every metric elsewhere in this repo ([Demographic Parity](demographic-parity.md), [Equalized Odds](equalized-odds.md), [Predictive Parity](predictive-parity.md)) is defined for a binary decision: hired or not, flagged or not, approved or not. A search engine, a job-recommendation feed or a marketplace results page does not make one decision per person. It produces an ordered list, and where someone lands decides how many people ever look at them. Users click near the top; position bias is large and well documented.
+
+So two candidates with nearly identical scores can get very different outcomes, and the damage is a group-level one that only appears when a ranking function and an attention model are stacked on top of the scores.
+
+## Core Concept: Exposure
+
+Exposure is a position-weighted measure of the attention an item receives. A standard choice borrowed from information retrieval discounts by the log of the rank:
+
+```
+exposure(rank) = 1 / log2(rank + 1)       rank 1 -> 1.00,  rank 3 -> 0.50,  rank 7 -> 0.33
+```
+
+Fairness of exposure (Singh and Joachims, 2018) asks whether groups with the same average relevance get the same average exposure. It is not enough for the groups' average *scores* to match. Compare it with demographic parity: parity looks at a rate over a decision, exposure looks at a distribution over positions.
+
+Where the list is cut off matters. A hiring team that looks at the top 1,000 of 23,062 candidates gives zero exposure to everyone below rank 1,000, and averaging a discount over the full list washes that out.
+
+## Concrete Example: AI Fair Recruitment
+
+The [AI Fair Recruitment](../AI%20Fair%20Recruitment/) audit, logistic regression, the benchmark's own split (23,062 test candidates, 36.5% of them women). Instead of thresholding at 0.5, sort the test candidates by predicted hire probability. Two rankings: the baseline model with `Gender` as a feature, and the same model with `Gender` removed.
+
+```
+baseline (Gender is a feature)
+  female share of the top 1000: 0.070 (pool 0.365)
+  exposure ratio female/male, whole list: 0.955
+  exposure ratio female/male, top 1000 only: 0.107
+  exposure per unit of hire rate, female/male: 0.116
+mitigated (Gender removed)
+  female share of the top 1000: 0.356 (pool 0.365)
+  exposure ratio female/male, whole list: 1.001
+  exposure ratio female/male, top 1000 only: 1.015
+  exposure per unit of hire rate, female/male: 1.099
+```
+
+The whole-list exposure ratio for the baseline is 0.955, which looks like near parity. Only the top-1,000 cutoff shows what is happening: women get 0.107 of men's exposure and make up 7.0% of the shortlist against 36.5% of the pool. Removing `Gender` brings the shortlist to 35.6% women. Dividing exposure by each group's actual hire rate (24.6% for women, 26.6% for men) gives 1.099 after mitigation: women now get about 10% more exposure per unit of hire rate than men.
+
+For scale, the benchmark's classification rows for the same audit in `results/` (the current results) show a demographic parity gap of -0.0656 for the baseline and -0.0065 without `Gender`. A 6.6 point gap in a threshold decision became a shortlist with 7% women. The classification metric understates it.
+
+## Detection/Implementation Code
+
+Run from the repo root (`PYTHONPATH=. python3 ranking.py`). The code ranks by score, applies the log discount, and reports exposure ratios with and without a cutoff.
+
+```python
+import numpy as np
+from sklearn.model_selection import train_test_split
+from faircode.manifest import load_manifest
+from faircode.benchmark import _load_dataset      # the loader the benchmark harness uses
+from faircode.strategies import encode_features
+from faircode.models import build_model
+
+def load_audit(folder, with_gender=False):
+    manifest = load_manifest(f"{folder}/audit.yaml")
+    df, y, masks = _load_dataset(manifest)        # masks[name] is 1 for the disadvantaged group
+    columns = list(dict.fromkeys(manifest.core_features + manifest.proxy_features + (['Gender'] if with_gender else [])))
+    X = encode_features(df, columns)
+    train, test = train_test_split(np.arange(len(df)), test_size=manifest.test_size,
+                                   random_state=manifest.random_state, stratify=y)
+    return manifest, X, y, {k: v.to_numpy() for k, v in masks.items()}, train, test
+
+manifest, X_biased, y, masks, train, test = load_audit("AI Fair Recruitment", with_gender=True)
+_, X_fair, *_ = load_audit("AI Fair Recruitment", with_gender=False)
+female = masks["gender"][test]                      # 1 = female candidate (the disadvantaged group)
+hired = y.iloc[test].to_numpy()
+K = 1000                                            # only the top 1,000 of 23,062 candidates are ever looked at
+
+def scores(X):
+    model = build_model("logistic_regression", manifest.random_state)
+    return model.fit(X.iloc[train], y.iloc[train]).predict_proba(X.iloc[test])[:, 1]
+
+def exposure(score, k=None):
+    order = np.argsort(-score, kind="stable")
+    rank = np.empty(len(score), dtype=int)
+    rank[order] = np.arange(1, len(score) + 1)
+    e = 1 / np.log2(rank + 1)                       # position discount: rank 1 -> 1.0, rank 3 -> 0.5, rank 7 -> 0.33
+    return e if k is None else np.where(rank <= k, e, 0.0)
+
+def report(score, name):
+    top = np.argsort(-score, kind="stable")[:K]
+    whole, cut = exposure(score), exposure(score, K)
+    print(f"{name}\n  female share of the top {K}: {female[top].mean():.3f} (pool {female.mean():.3f})"
+          f"\n  exposure ratio female/male, whole list: {whole[female == 1].mean() / whole[female == 0].mean():.3f}"
+          f"\n  exposure ratio female/male, top {K} only: {cut[female == 1].mean() / cut[female == 0].mean():.3f}"
+          f"\n  exposure per unit of hire rate, female/male: "
+          f"{(cut[female == 1].mean() / hired[female == 1].mean()) / (cut[female == 0].mean() / hired[female == 0].mean()):.3f}")
+
+report(scores(X_biased), "baseline (Gender is a feature)")
+report(scores(X_fair), "mitigated (Gender removed)")
+```
+
+## Limitations
+
+1. **The discount function is an assumption.** `1 / log2(rank + 1)` is a convention. A steeper or flatter attention curve changes every number above. Estimate it from real click data when you have it.
+2. **The cutoff is an assumption too.** The whole-list ratio was 0.955 and the top-1,000 ratio 0.107 for the same model. Report the cutoff you used.
+3. **Equal exposure is not always the goal.** Singh and Joachims ask for exposure proportional to merit. The "per unit of hire rate" line is that idea in a crude form, and it overshoots to 1.099 here.
+4. **Re-ranking trades off with utility.** Forcing equal exposure moves some higher-scored candidates down. That is a [fairness-accuracy trade-off](fairness-accuracy-tradeoff.md) in a different shape, and it is measured with ranking utility instead of accuracy.
+5. **Hire rate is a noisy relevance label.** If the historical hiring decisions are biased, "relevance" inherits the bias. See [Label Bias](label-bias.md).
+
+## Related Concepts
+
+* [Demographic Parity](demographic-parity.md) - the classification counterpart that exposure generalizes
+* [Fairness-Accuracy Trade-off](fairness-accuracy-tradeoff.md) - re-ranking costs utility
+* [Subgroup Fairness](subgroup-fairness.md) - exposure can differ for intersections the aggregate hides
+* [Label Bias](label-bias.md) - when the relevance label is itself biased
+* [Feedback Loop Bias](feedback-loop-bias.md) - ranked results shape the clicks that retrain the ranker
+
+## Related Projects in This Repo
+
+* [`AI Fair Recruitment/`](../AI%20Fair%20Recruitment/) - the audit used for the example above
+* [`results/`](../results/) - the benchmark rows quoted for the classification gap
+
+## Further Reading
+
+* [Singh, A., Joachims, T. (2018): Fairness of Exposure in Rankings](https://arxiv.org/abs/1802.07281) - KDD 2018; the exposure framework and the proportional-to-merit criterion.
+* [Biega, A. J., Gummadi, K. P., Weikum, G. (2018): Equity of Attention: Amortizing Individual Fairness in Rankings](https://arxiv.org/abs/1805.01788) - SIGIR 2018; fair attention for individual items across a series of rankings.
+* [Jarvelin, K., Kekalainen, J. (2002): Cumulated Gain-Based Evaluation of IR Techniques](https://dl.acm.org/doi/10.1145/582415.582418) - ACM TOIS 20(4); the log-discount position model used above.
+
+---
+*Part of [The Fair Code Project](https://instagram.com/thefaircodeproject) - exposing and fixing algorithmic bias with real data and open code.*
+
+---
+
+# Reweighing
+URL: https://www.thefaircode.xyz/explainers/reweighing.html
+Summary: Learn how reweighing gives each (group, label) cell the weight it would have under independence, using one sample_weight argument and no model change. See it cut a parity gap on German Credit Lending and fail on Benefits Denial, where the features still separate the groups.
+
+> *Fix the training data before you train the model: give each (group, label) cell the weight it would have if group and label were independent.*
+
+## The One-Sentence Definition
+
+**Reweighing** is a pre-processing mitigation that assigns each training row a weight so that, in the weighted data, group membership and the label are statistically independent, without changing any feature or any label.
+
+## Why It Matters
+
+In a biased dataset, the disadvantaged group is under-represented among positive labels. A model trained on it learns that base-rate gap and reproduces it. Dropping the protected column ([Fairness Through Unawareness](fairness-through-unawareness.md)) does not fix it when proxies carry the signal, and in-processing methods such as `ExponentiatedGradient` need you to swap the training procedure.
+
+Reweighing needs neither. It is one line before `fit`: pass `sample_weight`. Every estimator that accepts weights can use it, and the data itself is not edited, which is why it is popular when you cannot change the model or may not alter records.
+
+## Core Concept: Weights From Expected Over Observed
+
+For group `s` and label `y`, the weight is the count you would expect if the two were independent divided by the count you actually see:
+
+```
+weight(s, y) = P(s) * P(y) / P(s, y)
+```
+
+A cell that is over-represented gets weight below 1. An under-represented cell gets weight above 1. In the weighted data the positive rate is the same in both groups, so a model that only learns from the labels has no gap to copy. The method is from Kamiran and Calders (2012).
+
+## Concrete Example: German Credit Lending
+
+The [German Credit Lending](../German%20Credit%20Lending/) audit: positive is a good credit rating, the disadvantaged group is age under 30, logistic regression, core features only, benchmark split.
+
+```
+German Credit Lending - age
+  weights per (group, label): {(0, 0): 1.176, (0, 1): 0.94, (1, 0): 0.802, (1, 1): 1.119}
+  baseline   accuracy 0.700 | positive rate disadvantaged 0.710 advantaged 0.802 | parity gap -0.0914
+  reweighing accuracy 0.695 | positive rate disadvantaged 0.826 advantaged 0.809 | parity gap +0.0169
+Benefits Denial - sex
+  weights per (group, label): {(0, 0): 1.094, (0, 1): 0.787, (1, 0): 0.852, (1, 1): 2.206}
+  baseline   accuracy 0.811 | positive rate disadvantaged 0.059 advantaged 0.109 | parity gap -0.0509
+  reweighing accuracy 0.811 | positive rate disadvantaged 0.059 advantaged 0.111 | parity gap -0.0523
+```
+
+Reweighing took the parity gap from -0.0914 to +0.0169 for 0.5 points of accuracy (0.700 to 0.695). The baseline row matches the benchmark's S2 strategy in `results/` (the current results): accuracy 0.700 and a gap of -0.0914. For comparison, the same file has S3 `in_processing` at a gap of +0.068 and accuracy 0.715, and S4 `post_processing` at +0.0467 and 0.720.
+
+That is one data set of 1,000 rows. The test split is about 200 rows, and the benchmark's own p-value for the S2 gap is 0.17, so neither the baseline gap nor the improvement is statistically firm. See [Permutation Tests for Fairness Gaps](permutation-test-fairness-gaps.md).
+
+## Where It Does Not Work
+
+The second block in the output is the same method on [Benefits Denial](../Benefits%20Denial/), sex as the attribute. The weights are doing something (women with high income get 2.206x weight), but the parity gap does not move: -0.0509 before, -0.0523 after. The features still separate the groups, and the model keeps using them.
+
+## Detection/Implementation Code
+
+Run from the repo root (`PYTHONPATH=. python3 reweighing.py`).
+
+```python
+import numpy as np
+from sklearn.model_selection import train_test_split
+from faircode.manifest import load_manifest
+from faircode.benchmark import _load_dataset      # the loader the benchmark harness uses
+from faircode.strategies import encode_features
+from faircode.models import build_model
+
+def load_audit(folder):
+    manifest = load_manifest(f"{folder}/audit.yaml")
+    df, y, masks = _load_dataset(manifest)        # masks[name] is 1 for the disadvantaged group
+    columns = list(dict.fromkeys(manifest.core_features))   # S2 feature set: no protected columns, no proxies
+    X = encode_features(df, columns)
+    train, test = train_test_split(np.arange(len(df)), test_size=manifest.test_size,
+                                   random_state=manifest.random_state, stratify=y)
+    return manifest, X, y, {k: v.to_numpy() for k, v in masks.items()}, train, test
+
+def reweighing_weights(s, y):
+    """Kamiran and Calders: weight = P(group) * P(label) / P(group, label), per (group, label) cell."""
+    w = np.empty(len(y))
+    for g in (0, 1):
+        for label in (0, 1):
+            cell = (s == g) & (y == label)
+            w[cell] = (s == g).mean() * (y == label).mean() / cell.mean()
+    return w
+
+def run(folder, attribute):
+    manifest, X, y, masks, train, test = load_audit(folder)
+    s_tr, s_te = masks[attribute][train], masks[attribute][test]
+    y_tr, y_te = y.iloc[train].to_numpy(), y.iloc[test].to_numpy()
+    w = reweighing_weights(s_tr, y_tr)
+    print(folder, "-", attribute)
+    print("  weights per (group, label):", {(g, l): round(float(w[(s_tr == g) & (y_tr == l)][0]), 3) for g in (0, 1) for l in (0, 1)})
+    for name, weight in (("baseline", None), ("reweighing", w)):
+        model = build_model("logistic_regression", manifest.random_state).fit(X.iloc[train], y_tr, sample_weight=weight)
+        pred = model.predict(X.iloc[test])
+        print(f"  {name:10s} accuracy {(pred == y_te).mean():.3f} | positive rate disadvantaged {pred[s_te == 1].mean():.3f} "
+              f"advantaged {pred[s_te == 0].mean():.3f} | parity gap {pred[s_te == 1].mean() - pred[s_te == 0].mean():+.4f}")
+
+run("German Credit Lending", "age")
+run("Benefits Denial", "sex")
+```
+
+## Limitations
+
+1. **It only touches the label-group association.** If other features separate the groups, as in Benefits Denial, the weights cannot stop the model from using them. Pair it with [proxy removal](proxy-variables.md).
+2. **It can lift the disadvantaged group past parity.** The German Credit gap went from -0.0914 to +0.0169. Weights target the training distribution, not a chosen test-set gap.
+3. **Extreme weights make fits unstable.** A cell with few rows and a large weight can dominate. The Benefits weight of 2.206 is mild, but a rare cell gets a much larger one.
+4. **It targets demographic parity.** It makes no promise about equalized odds or calibration.
+5. **Small data gives noisy estimates.** The weights are estimated from the same few rows, and the evaluation is on a small test set.
+
+## Related Concepts
+
+* [Mitigation Strategies](mitigation-strategies.md) - where pre-, in- and post-processing sit in the benchmark
+* [Demographic Parity](demographic-parity.md) - the criterion reweighing is built to reach
+* [Class Imbalance](class-imbalance.md) - the same weighting mechanics, applied to labels
+* [Label Bias](label-bias.md) - why the observed label association exists
+* [Fairness Through Unawareness](fairness-through-unawareness.md) - why dropping the column is not enough
+
+## Related Projects in This Repo
+
+* [`German Credit Lending/`](../German%20Credit%20Lending/) - the audit used for the main example
+* [`Benefits Denial/`](../Benefits%20Denial/) - the audit where it does not work
+* [`results/`](../results/) - the benchmark rows quoted for S2, S3 and S4
+
+## Further Reading
+
+* [Kamiran, F., Calders, T. (2012): Data Preprocessing Techniques for Classification without Discrimination](https://link.springer.com/article/10.1007/s10115-011-0463-8) - Knowledge and Information Systems 33(1); the reweighing method.
+* Calders, T., Kamiran, F., Pechenizkiy, M. (2009). Building Classifiers with Independency Constraints. IEEE ICDM Workshops - the earlier formulation of the independence goal.
+* [Bellamy, R. et al. (2019): AI Fairness 360](https://arxiv.org/abs/1810.01943) - IBM Journal of Research and Development 63(4/5); an open-source toolkit that ships reweighing among its pre-processing methods.
+
+---
+*Part of [The Fair Code Project](https://instagram.com/thefaircodeproject) - exposing and fixing algorithmic bias with real data and open code.*
+
+---
+
+# Group-Specific Thresholds
+URL: https://www.thefaircode.xyz/explainers/group-specific-thresholds.html
+Summary: Learn how post-processing picks a different score cutoff per group to satisfy demographic parity or equal opportunity without retraining. See the thresholds on Tenant Screening, how they compare with the benchmark's S4 row, and why using the group at decision time can be unlawful.
+
+> *One cutoff for everyone looks neutral. When score distributions differ by group, it is not.*
+
+## The One-Sentence Definition
+
+**Group-specific thresholds** are a post-processing mitigation: keep the trained model exactly as it is, and choose a different score cutoff for each group so that a chosen fairness criterion holds on the final decisions.
+
+## Why It Matters
+
+Many fairness fixes require retraining. Post-processing does not. When you inherit a scoring model, cannot touch it, or do not own the training pipeline, the cutoff is the one dial left. It is also the cleanest place to see the trade-off in numbers, because only one parameter per group changes.
+
+It matters in practice too: Hardt, Price and Srebro (2016) showed that for a given score, the cutoffs that achieve equalized odds or equal opportunity can be found from the data, and the method is what Fairlearn's `ThresholdOptimizer` implements for the benchmark's S4 strategy. Seeing the plain version first makes the library version legible.
+
+## Core Concept: Move the Cutoff, Not the Model
+
+A single threshold `t` gives each group a positive rate `P(score >= t | group)`. If one group's scores sit higher on average, the same `t` produces different rates. To equalize a criterion, pick `t_g` per group:
+
+* **Demographic parity:** choose `t_g` so each group's positive rate matches a target (here, the advantaged group's rate).
+* **Equal opportunity:** choose `t_g` so each group's true-positive rate matches.
+
+Both are quantile lookups on the scores. The one honest rule: fit the thresholds on training scores, then apply them to the test set. Choosing a cutoff on the test set that you then report on is circular.
+
+## Concrete Example: Tenant Screening
+
+The [Tenant Screening](../Tenant%20Screening/) audit: positive means the model flags a person as likely to reoffend within three years, the disadvantaged group is Black applicants, logistic regression, core features only, benchmark split.
+
+```
+one threshold (0.5)                accuracy 0.639 | positive rate advantaged 0.612 disadvantaged 0.725 | parity gap +0.1139 | TPR gap +0.0837
+group thresholds, parity           accuracy 0.639 | positive rate advantaged 0.612 disadvantaged 0.598 | parity gap -0.0138 | TPR gap -0.0256
+  disadvantaged-group threshold: 0.565 (advantaged stays 0.500)
+group thresholds, equal opportunity accuracy 0.640 | positive rate advantaged 0.612 disadvantaged 0.611 | parity gap -0.0002 | TPR gap -0.0133
+  disadvantaged-group threshold: 0.558
+```
+
+One threshold flags Black applicants at 72.5% against 61.2% for White applicants: a parity gap of +0.1139 and a true-positive-rate gap of +0.0837. Giving the disadvantaged group a cutoff of 0.565 (the other stays at 0.500) brings the parity gap to -0.0138 at the same 0.639 accuracy. The equal-opportunity cutoff of 0.558 brings the true-positive-rate gap to -0.0133 and the parity gap to -0.0002.
+
+The benchmark's S2 baseline in `results/` (the current results) is the same model: accuracy 0.639 and a gap of +0.1139. Its S4 `post_processing` row, Fairlearn's `ThresholdOptimizer`, has a gap of -0.0054 at 0.639 accuracy. The hand-written version lands in the same place.
+
+## Detection/Implementation Code
+
+Run from the repo root (`PYTHONPATH=. python3 thresholds.py`).
+
+```python
+import numpy as np
+from sklearn.model_selection import train_test_split
+from faircode.manifest import load_manifest
+from faircode.benchmark import _load_dataset      # the loader the benchmark harness uses
+from faircode.strategies import encode_features
+from faircode.models import build_model
+
+def load_audit(folder):
+    manifest = load_manifest(f"{folder}/audit.yaml")
+    df, y, masks = _load_dataset(manifest)        # masks[name] is 1 for the disadvantaged group
+    columns = list(dict.fromkeys(manifest.core_features))   # S2 feature set: no protected columns, no proxies
+    X = encode_features(df, columns)
+    train, test = train_test_split(np.arange(len(df)), test_size=manifest.test_size,
+                                   random_state=manifest.random_state, stratify=y)
+    return manifest, X, y, {k: v.to_numpy() for k, v in masks.items()}, train, test
+
+manifest, X, y, masks, train, test = load_audit("Tenant Screening")
+s_tr, s_te = masks["race"][train], masks["race"][test]
+y_tr, y_te = y.iloc[train].to_numpy(), y.iloc[test].to_numpy()
+model = build_model("logistic_regression", manifest.random_state).fit(X.iloc[train], y_tr)
+p_tr, p_te = model.predict_proba(X.iloc[train])[:, 1], model.predict_proba(X.iloc[test])[:, 1]
+
+def report(pred, name):
+    tpr = [pred[(s_te == g) & (y_te == 1)].mean() for g in (0, 1)]
+    print(f"{name:34s} accuracy {(pred == y_te).mean():.3f} | positive rate advantaged {pred[s_te == 0].mean():.3f} "
+          f"disadvantaged {pred[s_te == 1].mean():.3f} | parity gap {pred[s_te == 1].mean() - pred[s_te == 0].mean():+.4f} "
+          f"| TPR gap {tpr[1] - tpr[0]:+.4f}")
+
+report((p_te >= 0.5).astype(int), "one threshold (0.5)")
+
+# Demographic parity: give the disadvantaged group the threshold that matches the advantaged group's positive rate.
+# Fit the threshold on the TRAINING scores only, then apply it to the test set.
+target_rate = (p_tr[s_tr == 0] >= 0.5).mean()
+t_dp = np.quantile(p_tr[s_tr == 1], 1 - target_rate)
+report(np.where(s_te == 1, p_te >= t_dp, p_te >= 0.5).astype(int), "group thresholds, parity")
+print(f"  disadvantaged-group threshold: {t_dp:.3f} (advantaged stays 0.500)")
+
+# Equal opportunity: match the true-positive rate instead.
+target_tpr = (p_tr[(s_tr == 0) & (y_tr == 1)] >= 0.5).mean()
+t_eo = np.quantile(p_tr[(s_tr == 1) & (y_tr == 1)], 1 - target_tpr)
+report(np.where(s_te == 1, p_te >= t_eo, p_te >= 0.5).astype(int), "group thresholds, equal opportunity")
+print(f"  disadvantaged-group threshold: {t_eo:.3f}")
+```
+
+## Limitations
+
+1. **It uses the group at decision time.** The final rule treats two applicants with the same score differently because of their group. In US employment, race-norming of test scores has been prohibited since the Civil Rights Act of 1991, and similar disparate-treatment rules apply in lending and housing. Check the law before using it.
+2. **It needs the protected attribute at inference.** Many deployed systems do not have it, or are not allowed to use it.
+3. **It breaks score calibration across groups.** A score of 0.55 now means different things in each group. See [Calibration](calibration.md).
+4. **It hides the cause.** The gap came from the model and its features. Moving the cutoff reports a fair-looking outcome and leaves the cause untouched.
+5. **One pair of thresholds satisfies one criterion.** The parity cutoff left a true-positive-rate gap of -0.0256, and the equal-opportunity cutoff left a gap of -0.0133. In general the criteria conflict, see [Fairness Metric Conflicts](fairness-metric-conflicts.md).
+
+## Related Concepts
+
+* [Reject Option Classification](reject-option-classification.md) - another post-processing method, applied only near the cutoff
+* [Equal Opportunity](equal-opportunity.md) - the criterion behind the second set of thresholds
+* [Demographic Parity](demographic-parity.md) - the criterion behind the first set
+* [Calibration](calibration.md) - what group-specific cutoffs give up
+* [Mitigation Strategies](mitigation-strategies.md) - S4 in the benchmark
+
+## Related Projects in This Repo
+
+* [`Tenant Screening/`](../Tenant%20Screening/) - the audit used for the example above
+* [`results/`](../results/) - the benchmark rows quoted for S2 and S4
+
+## Further Reading
+
+* [Hardt, M., Price, E., Srebro, N. (2016): Equality of Opportunity in Supervised Learning](https://arxiv.org/abs/1610.02413) - NeurIPS 2016; the post-processing method and its derivation.
+* [Corbett-Davies, S., Goel, S. (2018): The Measure and Mismeasure of Fairness](https://arxiv.org/abs/1808.00023) - a critique of fairness definitions, including the cost of group-specific thresholds.
+* [Agarwal, A. et al. (2018): A Reductions Approach to Fair Classification](https://arxiv.org/abs/1803.02453) - ICML 2018; the Fairlearn reductions that the benchmark's S3 strategy uses.
+
+---
+*Part of [The Fair Code Project](https://instagram.com/thefaircodeproject) - exposing and fixing algorithmic bias with real data and open code.*
+
+---
+
+# Permutation Tests for Fairness Gaps
+URL: https://www.thefaircode.xyz/explainers/permutation-test-fairness-gaps.html
+Summary: Learn how shuffling group labels turns a fairness gap into a p-value, and how the same 5-point gap on Benefits Denial is significant in 72% of 1,000-row audits and only 17% of 200-row ones. Includes a hand-written test checked against faircode.significance.
+
+> *A fairness gap is a number. Whether it is a finding or a coincidence depends on how many people it was measured on.*
+
+## The One-Sentence Definition
+
+A **permutation test for a fairness gap** asks how often a gap this large would appear if group membership carried no information at all, by shuffling the group labels many times and counting.
+
+## Why It Matters
+
+An audit reports "the positive rate for women is 5.9% and for men 10.9%". Is that a real disparity or sampling noise? On a 6,500-row test set it is overwhelming. On the 200-row test set of a small audit, the same gap often is not, and reading either one without a test leads to the wrong call: ignoring a real gap, or acting on an accident.
+
+Every row in `results/results_fairness.csv` carries a `p_value`, a bootstrap interval (`ci_low`, `ci_high`) and a `significant` flag for exactly this reason. This explainer shows how that p-value is produced.
+
+## Core Concept: Shuffle the Labels
+
+The null hypothesis is that group label is irrelevant. If so, every assignment of "group A" and "group B" to the same rows was equally likely. So:
+
+1. Compute the observed gap in positive rate.
+2. Pool the predictions from both groups.
+3. Shuffle the group labels, split, and recompute the gap. Repeat thousands of times.
+4. The p-value is the share of shuffled gaps at least as large (in absolute value) as the observed one.
+
+It is distribution-free and valid on the small, unbalanced groups audits keep running into. It complements the [bootstrap interval](bootstrap-confidence-intervals.md), which says how large the gap might be, while the permutation p-value says how surprising it is under no effect.
+
+## Concrete Example: Benefits Denial
+
+The [Benefits Denial](../Benefits%20Denial/) audit, logistic regression on core features, benchmark split. The model flags 5.9% of women and 10.9% of men as ineligible, a gap of -0.0509. First the full test set, with a hand-written test checked against `faircode.significance`. Then the same model and the same gap, audited on random subsamples of 200 and 1,000 rows.
+
+```
+test rows 6513: 2153 women, 4360 men | positive rate 0.059 vs 0.109 | gap -0.0509
+hand-written p: 0.0 | faircode.significance p: 0.0
+  200 rows: p < 0.05 in 17% of 200 random samples (median p 0.273)
+ 1000 rows: p < 0.05 in 72% of 200 random samples (median p 0.013)
+```
+
+On the full test set the p-value is below 1/2000 (the resolution of 2,000 shuffles), and the interval is -0.064 to -0.037. On 1,000 rows, a 5-point gap clears p < 0.05 in only 72% of samples. On 200 rows it clears it in only 17%. The gap did not change; the evidence did. The benchmark's German Credit S2 row has a gap of -0.0914 with a p-value of 0.17 in `results/` (the current results): a bigger gap than here, measured on about 200 test rows, and not significant.
+
+## Detection/Implementation Code
+
+Run from the repo root (`PYTHONPATH=. python3 permutation.py`).
+
+```python
+import numpy as np
+from sklearn.model_selection import train_test_split
+from faircode.manifest import load_manifest
+from faircode.benchmark import _load_dataset      # the loader the benchmark harness uses
+from faircode.strategies import encode_features
+from faircode.models import build_model
+
+def load_audit(folder):
+    manifest = load_manifest(f"{folder}/audit.yaml")
+    df, y, masks = _load_dataset(manifest)        # masks[name] is 1 for the disadvantaged group
+    columns = list(dict.fromkeys(manifest.core_features))   # S2 feature set: no protected columns, no proxies
+    X = encode_features(df, columns)
+    train, test = train_test_split(np.arange(len(df)), test_size=manifest.test_size,
+                                   random_state=manifest.random_state, stratify=y)
+    return manifest, X, y, {k: v.to_numpy() for k, v in masks.items()}, train, test
+from faircode.significance import permutation_test
+
+manifest, X, y, masks, train, test = load_audit("Benefits Denial")
+sex = masks["sex"][test]                            # 1 = female
+model = build_model("logistic_regression", manifest.random_state).fit(X.iloc[train], y.iloc[train])
+pred = model.predict(X.iloc[test]).astype(float)
+women, men = pred[sex == 1], pred[sex == 0]
+print(f"test rows {len(pred)}: {len(women)} women, {len(men)} men | positive rate {women.mean():.3f} vs {men.mean():.3f} | gap {women.mean() - men.mean():+.4f}")
+
+def permutation_p(a, b, n_permutations=2000, seed=42):
+    """Two-sided p: how often does a random relabelling give a gap at least this big?"""
+    rng = np.random.default_rng(seed)
+    pooled = np.concatenate([a, b])
+    observed = abs(a.mean() - b.mean())
+    hits = 0
+    for _ in range(n_permutations):
+        rng.shuffle(pooled)                          # the group label carries no information (the null)
+        hits += abs(pooled[:len(a)].mean() - pooled[len(a):].mean()) >= observed
+    return hits / n_permutations
+
+print("hand-written p:", permutation_p(women, men), "| faircode.significance p:", permutation_test(women, men, n_permutations=2000))
+
+# The same model and the same 5-point gap, audited on smaller and smaller samples.
+rng = np.random.default_rng(0)
+for n in (200, 1000):
+    p_values = []
+    for i in range(200):
+        pick = rng.choice(len(pred), n, replace=False)
+        a, b = pred[pick][sex[pick] == 1], pred[pick][sex[pick] == 0]
+        if min(len(a), len(b)) >= 5:
+            p_values.append(permutation_test(a, b, n_permutations=300, random_state=i))
+    p_values = np.array(p_values)
+    print(f"{n:5d} rows: p < 0.05 in {np.mean(p_values < 0.05):.0%} of {len(p_values)} random samples (median p {np.median(p_values):.3f})")
+```
+
+`faircode.significance.significance_report` returns the gap, the bootstrap interval, the p-value and a `small_sample_warning` for a group under 30 rows in one call.
+
+## Limitations
+
+1. **A p-value is not an effect size.** With enough rows, a 0.2 point gap is "significant". Read it next to the gap and its interval.
+2. **A p of 0 means smaller than 1/n_permutations.** Report "p < 0.0005", not zero.
+3. **It tests one test split, not the model.** Retraining with a different seed moves the gap. The test does not capture that variance.
+4. **Many gaps means many chances.** The benchmark reports dozens of metrics per audit. See [Multiple Comparisons](multiple-comparisons.md).
+5. **Exchangeability is an assumption.** If rows are duplicated, clustered by household or correlated in time, shuffling labels over-states the evidence. Use a grouped permutation.
+
+## Related Concepts
+
+* [Bootstrap Confidence Intervals](bootstrap-confidence-intervals.md) - the size of the gap, the companion to this test
+* [Multiple Comparisons](multiple-comparisons.md) - what to do when you run many of these
+* [Demographic Parity](demographic-parity.md) - the gap being tested here
+* [Sampling Bias](sampling-bias.md) - why the sample may not represent the population
+* [Subgroup Fairness](subgroup-fairness.md) - small intersections make the power problem worse
+
+## Related Projects in This Repo
+
+* [`Benefits Denial/`](../Benefits%20Denial/) - the audit used for the example above
+* [`German Credit Lending/`](../German%20Credit%20Lending/) - a small audit where the test matters most
+* [`results/`](../results/) - every benchmark row has a `p_value`
+
+## Further Reading
+
+* Fisher, R. A. (1935). *The Design of Experiments.* Oliver and Boyd - the origin of the permutation test.
+* Ernst, M. D. (2004). Permutation Methods: A Basis for Exact Inference. Statistical Science 19(4); a clear modern account of why and when it is exact.
+* Efron, B., Tibshirani, R. (1993). An Introduction to the Bootstrap. Chapman and Hall; the companion interval method.
+
+---
+*Part of [The Fair Code Project](https://instagram.com/thefaircodeproject) - exposing and fixing algorithmic bias with real data and open code.*
+

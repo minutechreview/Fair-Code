@@ -630,5 +630,63 @@ window.FAIR_CODE_EXPLAINERS = [
       "detection",
       "healthcare"
     ]
+  },
+  {
+    "slug": "maxmin-fairness",
+    "title": "Max-Min (Rawlsian) Fairness",
+    "subtitle": "Make the worst-off group as well off as possible, even if groups end up unequal.",
+    "summary": "Learn why parity metrics and Rawls' difference principle can disagree: a model can lift the worst-off group and still widen a parity gap. See a worst-group reweighting loop on Benefits Denial, what it does to every other group, and why a minimum group size is not optional.",
+    "tags": [
+      "metrics"
+    ]
+  },
+  {
+    "slug": "distributionally-robust-optimization",
+    "title": "Distributionally Robust Optimization (DRO) for Fairness",
+    "subtitle": "Hedge against the worst group instead of constraining one metric.",
+    "summary": "Learn how group DRO trains against an adversary that shifts weight onto whichever group the model currently fails, and how it differs from a parity-constrained method like ExponentiatedGradient. See the real worst-group gain on Benefits Denial, the cost to the other groups, and how the step size over-hedges.",
+    "tags": [
+      "metrics",
+      "data"
+    ]
+  },
+  {
+    "slug": "fairness-in-ranking",
+    "title": "Fairness in Ranking",
+    "subtitle": "Two similar scores can still mean very different attention.",
+    "summary": "Learn why classification metrics cannot see the harm of an ordered list, and how exposure, a position-weighted measure of attention, can. See a hiring ranking on AI Fair Recruitment where whole-list exposure looks fair (0.955) while the top-1,000 shortlist gives women 0.107 of men's exposure.",
+    "tags": [
+      "metrics",
+      "detection"
+    ]
+  },
+  {
+    "slug": "reweighing",
+    "title": "Reweighing",
+    "subtitle": "Fix the training data's group-label link before fitting.",
+    "summary": "Learn how reweighing gives each (group, label) cell the weight it would have under independence, using one sample_weight argument and no model change. See it cut a parity gap on German Credit Lending and fail on Benefits Denial, where the features still separate the groups.",
+    "tags": [
+      "data",
+      "metrics"
+    ]
+  },
+  {
+    "slug": "group-specific-thresholds",
+    "title": "Group-Specific Thresholds",
+    "subtitle": "Keep the model, move the cutoff.",
+    "summary": "Learn how post-processing picks a different score cutoff per group to satisfy demographic parity or equal opportunity without retraining. See the thresholds on Tenant Screening, how they compare with the benchmark's S4 row, and why using the group at decision time can be unlawful.",
+    "tags": [
+      "metrics"
+    ]
+  },
+  {
+    "slug": "permutation-test-fairness-gaps",
+    "title": "Permutation Tests for Fairness Gaps",
+    "subtitle": "Is the gap a finding or a coincidence?",
+    "summary": "Learn how shuffling group labels turns a fairness gap into a p-value, and how the same 5-point gap on Benefits Denial is significant in 72% of 1,000-row audits and only 17% of 200-row ones. Includes a hand-written test checked against faircode.significance.",
+    "tags": [
+      "detection",
+      "metrics"
+    ]
   }
 ];

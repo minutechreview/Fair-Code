@@ -1035,7 +1035,11 @@ def test_cli_benchmark_paper_drift_warning_on_overrides(monkeypatch, tmp_path, c
 
     assert exit_code == 0
     captured = capsys.readouterr()
-    assert "warning: --n-resamples=50, --n-permutations=50 differs from the frozen paper-run default (2000)" in captured.err
+    assert (
+        "warning: --n-resamples=50, --n-permutations=50 differs from the default (2000); "
+        "the numbers will not match the published results in results/ or the reference "
+        "snapshot in paper/results-frozen/." in captured.err
+    )
     assert f"Ran 1 audit(s), wrote 1 fairness rows and 1 performance rows to {out_dir}/" in captured.err
 
 
@@ -1585,6 +1589,22 @@ def test_every_documented_faircode_command_parses_with_the_real_parser(capsys):
     assert not failures, "\n".join(failures)
 
 
+def test_every_long_option_is_mentioned_in_the_readme_or_spec():
+    # #1040: a flag that only shows up in --help (benchmark --root, --no-plots) cannot be found by a reader.
+    from faircode.cli import build_parser
+    root = Path(__file__).resolve().parent.parent
+    docs = (root / "README.md").read_text(encoding="utf-8") + (root / "faircode" / "SPEC.md").read_text(encoding="utf-8")
+    subparsers = build_parser()._subparsers._group_actions[0].choices
+    missing = [
+        f"{name} {option}"
+        for name, sub in subparsers.items()
+        for action in sub._actions
+        for option in action.option_strings
+        if option.startswith("--") and option != "--help" and option not in docs
+    ]
+    assert not missing, "undocumented options: " + ", ".join(missing)
+
+
 def test_the_documented_command_check_catches_a_bad_flag(capsys):
     import shlex
     from faircode.cli import build_parser
@@ -1730,3 +1750,22 @@ def test_reference_csv_with_a_blank_share_ignores_that_row(tmp_path, capsys):
     assert "NaN" not in out and "Infinity" not in out
     groups = {g["label"] for g in json.loads(out)["dimensions"][0]["reference"]["groups"]}
     assert groups == {"M", "F"}
+
+
+def test_fail_under_outside_0_to_100_is_a_usage_error(tmp_path, capsys):
+    """#1037: 150 would fail every run and -5 would never fail, so both are rejected."""
+    path = tmp_path / "balanced.csv"
+    path.write_text("sex\nM\nF\nM\nF\n", encoding="utf-8")
+    for value in ("150", "100.5", "-5", "-0.1", "nan", "inf"):
+        assert main(["profile", str(path), "--fail-under", value]) == 2
+        captured = capsys.readouterr()
+        assert "--fail-under must be between 0 and 100, got " in captured.err
+        assert captured.out == ""
+
+
+def test_fail_under_accepts_both_ends_of_the_range(tmp_path, capsys):
+    path = tmp_path / "balanced.csv"
+    path.write_text("sex\nM\nF\nM\nF\n", encoding="utf-8")
+    assert main(["profile", str(path), "--fail-under", "0"]) == 0
+    assert main(["profile", str(path), "--fail-under", "100"]) == 0
+    assert "must be between" not in capsys.readouterr().err

@@ -23,7 +23,7 @@ that is what the `unfair.py` / `fair.py` audits do. The Profiler answers a diffe
 
 ## 1. Column auto-detection
 
-Repeated header names are made unique the way pandas does (`name`, `name.1`, `name.2`, ... skipping names already taken) before anything else; the browser parser does the same so two same-named columns are two dimensions, never one overwriting the other (#834).
+A blank header cell is named `Unnamed: N` (N is the zero-based column index), as pandas does. Repeated header names are then made unique the same way (`name`, `name.1`, `name.2`, ... skipping names already taken) before anything else; the browser parser does the same so two same-named columns are two dimensions, never one overwriting the other (#834).
 
 **Tokenize** the column name: strip accents (Unicode NFD, then drop U+0300-U+036F, so `Género`
 becomes `Genero`), split on separators **and** camelCase boundaries, then lower-case.
@@ -200,6 +200,11 @@ Grade bands:
 | D     | 40–54   | Strong imbalance / sparse subgroups                  |
 | F     | 0–39    | Severe imbalance or single-group dimensions          |
 
+`faircode profile --fail-under N` compares the score with `N` for a CI gate: exit 1 when the score is
+below `N`, exit 0 otherwise. `N` must be between 0 and 100, the range of the score. Any other value,
+including `nan`, exits 2 with "--fail-under must be between 0 and 100, got N" before the dataset is
+read, because a value above 100 would fail every run and a negative one would never fail (#1037).
+
 The score intentionally reflects **balance only**. Missing-data %, imbalance ratios, and
 intersectional gaps are surfaced as **flags** alongside the score, not folded into it - this keeps
 the two engines trivially in sync and the score easy to explain.
@@ -243,6 +248,14 @@ dict, JS uses a plain object):
 with `imbalance_ratio ≥ 3`, every dimension with `missing_pct ≥ 0.05`, every age dimension with
 `implausible_values` (an optional integer key present only when above zero, #840), and every
 intersectional gap, plus the label-collision warnings from section 3.
+
+**Per-group flag cap.** Within one dimension, once more than `FLAG_GROUP_CAP` (**10**) flags of the
+same kind (under-represented, small group, or label collision) would be raised, they are replaced
+by one summary flag at the position of the first (for example `zip: 17930 groups have only 29 rows
+or fewer; fairness metrics may be unreliable`). The same rule applies to the absent and thin cells of
+one intersection. The per-group detail is not lost: every group stays in `dimensions[].groups`
+(`--json`) and the CSV rows. The terminal, HTML and web views list at most `MAX_DISPLAYED_FLAGS`
+(**50**) flags, then "and N more flags".
 
 ---
 
@@ -319,6 +332,11 @@ group, every added/removed dimension, **and** every `kind_mismatch` dimension's 
 "drift comparison skipped" notice - that last case is informational only (the comparison genuinely
 couldn't be measured, not evidence of drift), so it's the one category of `flags` entry
 **excluded** from `drift_detected`.
+
+**Appeared/disappeared cap.** When one dimension has more than `FLAG_GROUP_CAP` (**10**)
+`appeared` (or `disappeared`) groups, `flags` carries one line (`zip: 22400 groups appeared`)
+instead of one per group; `drift_detected` is unaffected, and every group stays in
+`dimensions[].groups` and the CSV. The flag list is displayed capped at `MAX_DISPLAYED_FLAGS` (50).
 
 `drift_detected` is a boolean - `true` iff at least one *real* drift signal fired (any of the first
 five categories above), `false` if `flags` is empty or contains only kind-mismatch notices. The CLI's
@@ -498,7 +516,7 @@ parity obligation of its own - there is no equivalent MCP surface for the JS eng
 | `proxy_hints` | `proxy_hints()` | Returns `{"hints": [...]}`, never a bare list - a list return value gets split by the MCP SDK into one content block per element, and an empty list becomes zero blocks, indistinguishable from an error to a caller. Accepts `alpha`, `correction`, `held_out_with`, the dimension knobs `max_age`/`age_reference_year`/`keywords`/`max_categorical_card`/`max_dimension_groups` (#883), and `include_provenance` (default true, attaching dataset hash, params, overrides, and held-out files, section 10) |
 | `list_explainers` | `faircode/_explainers/data.json` (mirrored from `assets/explainers-data.json`) | Phase 2: read-only lookup, no analysis. Returns `{"explainers": [{slug, title, subtitle, summary, tags}, ...]}`; optional `tag` filters to explainers carrying it, erroring if none match |
 | `get_explainer` | `faircode/_explainers/<slug>.md` (mirrored from `explainers/<slug>.md`) | Phase 2: returns `{slug, title, subtitle, tags, content}` - `content` is the raw Markdown source. Errors clearly (`FileNotFoundError`) for an unknown slug |
-| `get_benchmark_results` | `faircode/_results_frozen/results_{fairness,performance}.csv` (mirrored from `paper/results-frozen/`) | Phase 2: filters the frozen CSV named by `kind` on exact-match `audit`/`model`/`strategy`/`metric`/`protected_attribute` (a filter naming a column `kind` doesn't have raises `ValueError` rather than being ignored). Returns `{results, total_matches, truncated}`, capped at 200 rows |
+| `get_benchmark_results` | `faircode/_results_frozen/results_{fairness,performance}.csv` (mirrored from `paper/results-frozen/`, the earlier reference snapshot) or `faircode/_results_current/results_{fairness,performance}.csv` (mirrored from the live `results/`) | Phase 2: filters the CSV named by `kind`, in the set named by `source` (`"frozen"` default, or `"current"`), on exact-match `audit`/`model`/`strategy`/`metric`/`protected_attribute` (a filter naming a column `kind` doesn't have raises `ValueError` rather than being ignored; so does an unknown `source`). Returns `{source, results, total_matches, truncated}`, capped at 200 rows; `source` names which set answered, so a quoted number can say whether it is current or the reference snapshot |
 
 The first three tools accept `overrides` (the section 1 `{column: kind}` map, as a JSON object rather
 than repeated `--map COL=KIND` strings) and the relevant section 7 thresholds by name.
@@ -533,6 +551,8 @@ A multi-sheet `.xlsx` path attaches the same "read sheet 'X' - N other sheet(s) 
 CLI already prints to stderr, as a `sheet_note` field (`sheet_note_a`/`sheet_note_b` on
 `compare_datasets`; `sheet_notes`, a list, on `proxy_hints` covering both `path` and any
 `held_out_with` files) - omitted entirely when nothing was ignored. See issue #386.
+
+An empty `hints` list is explained in `notes`, in the same words as the terminal and HTML reports (#1044): "none tested: a pair needs at least two dimensions (found N)" when fewer than two dimensions (counting any `held_out_with` columns) exist, otherwise "none found: no pair of dimensions is significantly associated". A result with at least one hint has no such note.
 
 `proxy_hints` only tests columns present in the dataset given by default, so it cannot flag a
 remaining column as a proxy for a protected attribute that has already been dropped from the
@@ -569,12 +589,22 @@ all - they only read this repo's own files, never a caller-supplied path - and u
 before it's used to build a filesystem path, closing a path-traversal read a malformed slug like
 `"../README"` could otherwise reach (issue #387).
 
-None of `explainers/`, `assets/explainers-data.json`, or `paper/results-frozen/` are files
+None of `explainers/`, `assets/explainers-data.json`, `results/`, or `paper/results-frozen/` are files
 `pyproject.toml` actually ships - a real `pip install faircode[mcp]` never has them on disk. All
 three Phase 2 tools instead read a package-internal, generated mirror under `faircode/`
-(`_explainers/`, built by `scripts/build_explainers.py`; `_results_frozen/`, built by
-`scripts/freeze_paper_results.py`), declared as real `package-data` so it ships in the wheel. See
+(`_explainers/`, built by `scripts/build_explainers.py`; `_results_frozen/` and `_results_current/`, built by
+`scripts/freeze_paper_results.py`'s `mirror_for_mcp()` and `mirror_current_for_mcp()`), declared as real `package-data` so it ships in the wheel. See
 issue #388, verified by building an actual wheel and installing it in a clean venv.
+
+### Comparing `results/` with the reference snapshot
+
+`scripts/diff_results.py` (#1065) joins `results/results_{fairness,performance}.csv` with
+`paper/results-frozen/` on the columns that identify a row (fairness: `audit`, `strategy`,
+`model`, `protected_attribute`, `metric`; performance: `audit`, `strategy`, `model`, `metric`) and
+reports each row as `moved` (|current − reference| greater than `--threshold`, default 0.01, or a
+value empty on one side only), `unchanged`, `only_current` or `only_reference`. Rows present on one
+side only are always flagged. `--json` prints the structured diff, `--all` lists unchanged rows, and
+`--fail-on-change` exits 1 when anything is flagged. It only reads both directories.
 
 ---
 

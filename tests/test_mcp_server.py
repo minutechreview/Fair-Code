@@ -17,6 +17,7 @@ pytest.importorskip("mcp", reason="MCP tools need the optional mcp extra")
 
 from faircode.mcp_server import (  # noqa: E402
     _compare_datasets_impl,
+    RESULTS_CURRENT_FILES,
     RESULTS_FROZEN_FILES,
     _get_benchmark_results_impl,
     _get_explainer_impl,
@@ -367,6 +368,39 @@ def test_proxy_hints_with_no_significant_pairs_returns_an_empty_list_not_an_erro
     assert "provenance" in result
 
 
+def test_proxy_hints_with_one_dimension_says_none_were_tested(tmp_path):
+    # #1044: with a single dimension no pair can be tested, which is not "tested, none found".
+    path = tmp_path / "a.csv"
+    path.write_text("sex\n" + "m\nf\n" * 20, encoding="utf-8")
+
+    result = _proxy_hints_impl(str(path))
+
+    assert result["hints"] == []
+    assert result["notes"] == ["none tested: a pair needs at least two dimensions (found 1)"]
+
+
+def test_proxy_hints_with_no_significant_pair_says_none_were_found(tmp_path):
+    # sex and occupation cross evenly, so they are independent and the pair is tested.
+    rows = ["sex,occupation"] + [f"{sex},{job}" for _ in range(25) for sex in ("male", "female") for job in ("engineer", "nurse")]
+    path = tmp_path / "a.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    result = _proxy_hints_impl(str(path))
+
+    assert result["hints"] == []
+    assert result["notes"] == ["none found: no pair of dimensions is significantly associated"]
+
+
+def test_proxy_hints_with_a_hint_has_no_none_note(tmp_path):
+    rows = ["sex,occupation"] + [
+        f"{'male' if i % 2 == 0 else 'female'},{'engineer' if i % 2 == 0 else 'nurse'}" for i in range(100)
+    ]
+    path = tmp_path / "a.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    assert "notes" not in _proxy_hints_impl(str(path))
+
+
 def test_proxy_hints_runtime_error_propagates_with_a_clean_message(tmp_path, monkeypatch):
     import faircode.mcp_server as mcp_server
 
@@ -550,7 +584,32 @@ def test_get_benchmark_results_rounds_float_precision():
 def test_get_benchmark_results_no_match_returns_empty_not_an_error():
     result = _get_benchmark_results_impl(audit="not_a_real_audit")
 
-    assert result == {"results": [], "total_matches": 0, "truncated": False}
+    assert result["results"] == []
+    assert result["total_matches"] == 0
+    assert result["truncated"] is False
+    # An unmatched filter value names that column's valid values so the empty
+    # result can't be misread as "no data" (#1041).
+    assert result["notes"] == [
+        "audit 'not_a_real_audit' not found; available: ai_fair_recruitment, "
+        "benefits_denial, compas, german_credit_lending, healthcare_readmission, "
+        "insurance_denial, tenant_screening"
+    ]
+
+
+def test_get_benchmark_results_case_mismatch_hints_the_right_value():
+    # Audit names are lowercase, so audit="COMPAS" matches nothing; the note
+    # should point out the case-only mismatch rather than looking like no data (#1041).
+    upper = _get_benchmark_results_impl(audit="COMPAS")
+    assert upper["total_matches"] == 0
+    assert len(upper["notes"]) == 1
+    note = upper["notes"][0]
+    assert note.startswith("audit 'COMPAS' not found; available:")
+    assert "did you mean 'compas'?" in note
+
+    # The exact (lowercase) value still matches and carries no note.
+    lower = _get_benchmark_results_impl(audit="compas")
+    assert lower["total_matches"] > 0
+    assert "notes" not in lower
 
 
 def test_get_benchmark_results_invalid_kind_raises():
@@ -1088,3 +1147,33 @@ def test_profile_dataset_names_an_empty_file_plainly(tmp_path):
     path.write_text("", encoding="utf-8")
     with pytest.raises(RuntimeError, match=r"could not read dataset .*zero\.csv: dataset is empty \(no header row\)"):
         _profile_dataset_impl(str(path))
+
+
+def test_get_benchmark_results_names_its_source_and_defaults_to_the_frozen_snapshot():
+    default = _get_benchmark_results_impl(audit="compas", strategy="baseline")
+    assert default["source"] == "frozen"
+    frozen = _get_benchmark_results_impl(audit="compas", strategy="baseline", source="frozen")
+    assert frozen["results"] == default["results"]
+
+
+def test_get_benchmark_results_can_return_the_current_results():
+    import pandas as pd
+
+    current = _get_benchmark_results_impl(audit="compas", strategy="baseline", source="current")
+    assert current["source"] == "current"
+    assert current["total_matches"] > 0
+    live = pd.read_csv(RESULTS_CURRENT_FILES["fairness"])
+    live = live[(live["audit"] == "compas") & (live["strategy"] == "baseline")]
+    assert current["total_matches"] == len(live)
+
+
+def test_get_benchmark_results_rejects_an_unknown_source():
+    with pytest.raises(ValueError, match="source must be one of"):
+        _get_benchmark_results_impl(source="paper")
+
+
+def test_get_benchmark_results_missing_current_mirror_names_the_right_recovery(tmp_path, monkeypatch):
+    missing = tmp_path / "_results_current" / "results_fairness.csv"
+    monkeypatch.setitem(RESULTS_CURRENT_FILES, "fairness", missing)
+    with pytest.raises(FileNotFoundError, match="mirror_current_for_mcp"):
+        _get_benchmark_results_impl(source="current")
