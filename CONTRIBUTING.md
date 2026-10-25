@@ -74,8 +74,26 @@ make build-explainers  # regenerate explainer pages, sitemap, and OG images (dar
 make fix-explainer-count  # correct any stale "N explainers" mention in README/CONTRIBUTORS/METRICS/ROADMAP after adding/removing an explainer
 make key-fold         # regenerate the JS case-folding table (assets/profiler-engine.js KEY_FOLD) after a Unicode upgrade
 make favicons          # regenerate favicon.ico, apple-touch-icon.png, icon-{192,512}.png after editing logo.svg
-make lint              # em-dash-free check + broken internal doc link check + ruff (unused imports, undefined names)
+make lint              # em-dash-free check + broken internal doc link check + issue-number check + explainer counts + traction figures + ruff
 ```
+
+Prerequisites for the full `make check`: Python 3.10 or newer, Node 18 or newer (`key-fold-check` and the JavaScript parity tests run the browser engines under `node`), and the GitHub CLI `gh` signed in (`scripts/check_issue_refs.py` asks GitHub whether an issue or PR number cited in the docs exists; it is skipped offline, and the lint workflow runs it as informational only).
+
+### Checks you may meet
+
+| If this fails | What it means | How to fix it |
+|---|---|---|
+| `check_em_dash.py` | A tracked file contains an em dash | Replace it with a hyphen, comma or colon |
+| `check_broken_links.py` | A relative link in the docs points at a missing file or heading | Fix the path or heading |
+| `check_issue_refs.py` | A `#NNN` in ROADMAP, CHANGELOG, CONTRIBUTORS or METRICS is not a real issue or PR | Correct the number |
+| `check_explainer_count.py` | An "N explainers" figure, or an explainer listing in the README or `llms.txt`, is stale | `make fix-explainer-count` (a missing listing has to be added by hand) |
+| `check_explainer_structure.py` | An explainer is missing a required section (definition, why it matters, concrete example, detection code, limitations, related concepts, further reading), has no `python` block, has fewer than two Further Reading entries, or lacks the footer line | Add the section (the check accepts the usual heading variants, e.g. "Why This Matters"); pages with a known gap are listed in `KNOWN_EXCEPTIONS` in the script, and an exception is removed when its page is fixed |
+| `check_traction.py` | Stars, forks, contributors, watching, social reach, countries or audits differ between README, ROADMAP and METRICS, or the README's "Show N completed items" differs from its `- [x]` lines | Edit the figure in the file(s) the message names so they agree; the README's "External Contributors" is one below the total |
+| `key-fold-check` | The JavaScript case-folding table `KEY_FOLD` no longer matches Python | `make key-fold`, then commit `assets/profiler-engine.js` |
+| A test that runs a README command | Every `faircode ...` line in the README, CONTRIBUTING and SPEC code blocks is checked against the CLI's argument parser; one of them uses a flag or value that no longer exists | Fix the example or the CLI |
+| `check_generated_files_current.py` (CI) | Generated explainer pages, sitemap, OG images or `llms-full.txt` are out of date | `make build-explainers`, then commit the result |
+
+The tests run in any pytest import mode, including `--import-mode=importlib`: `pyproject.toml` puts the repo root and `tests/` on `pythonpath`. The helpers shared by the JavaScript parity tests (`tests/test_js_parity_*.py`) live in `tests/js_helpers.py`.
 
 Optionally install the git hooks so the checks run automatically:
 
@@ -314,6 +332,8 @@ Explainers live in `explainers/` and should make one fairness concept easy to un
 
 ### Existing explainers
 
+A short sample, not a full list. README.md and llms.txt list every explainer, and `scripts/check_explainer_count.py` fails if either leaves one out.
+
 | File | Concept |
 |------|---------|
 | `proxy-variables.md` | Why AI stays biased after protected attributes are removed |
@@ -384,6 +404,52 @@ Explainers live in `explainers/` and should make one fairness concept easy to un
 | `reweighing.md` | A pre-processing mitigation that weights each (group, label) cell as if group and label were independent |
 | `group-specific-thresholds.md` | A post-processing mitigation that keeps the model and moves the score cutoff per group |
 | `permutation-test-fairness-gaps.md` | Shuffling group labels to tell a real gap from sampling noise, and why the same gap can be significant or not by sample size |
+| `adversarial-debiasing.md` | Training a predictor against an adversary that tries to read the protected attribute from its output |
+| `fairness-regularization.md` | Putting a price on the parity gap in the training loss, and why the soft gap is not the gap on decisions |
+| `fair-representation-learning.md` | Removing the directions that predict the group, and why a representation clean to a linear reader can leak to a forest |
+| `measurement-bias.md` | When a feature or label is recorded worse for one group, creating a gap the true values do not have |
+| `aggregation-bias.md` | Why one pooled model can fit every group worse than a model fitted to that group alone |
+| `survivorship-bias.md` | How training only on the people who passed an earlier filter shifts base rates and shrinks the gating feature's effect |
+| `disaggregated-evaluation.md` | Reporting every metric per group and intersection with an interval, and how fast intervals widen as groups shrink |
+| `leave-one-group-out-evaluation.md` | Holding out one group at a time to test generalization to people the training data left out |
+| `choosing-a-fairness-metric.md` | A decision path from the harm you worry about to the metric that measures it |
+| `model-cards.md` | A short standard disclosure of what a model is for, how it performs for each group, and where it should not be used |
+| `datasheets-for-datasets.md` | The questions about where data came from, answered in writing so an unknown is visible as an unknown |
+| `algorithmic-impact-assessment.md` | A structured review of who a decision system affects, with the fairness audit as its measurement section |
+| `inferring-protected-attributes.md` | Estimating group membership from other fields and what that does to a measured gap |
+| `fairness-without-demographics.md` | Improving the worst-off groups with no group labels by upweighting the rows the model gets wrong |
+| `adverse-action-notices.md` | How reason codes on a credit decline are derived from a model, and how they can expose a proxy: personal_status shows up 15 points more for under-30s. |
+| `geographic-proxies-and-redlining.md` | How a location feature can reveal race, and why proxy strength and effect on the parity gap are separate measurements, shown on Tenant Screening. |
+| `risk-based-pricing-gaps.md` | How to measure a group gap in a quoted amount or price when everyone is approved, with a bootstrap interval, shown on German Credit Lending. |
+| `race-in-clinical-models.md` | Comparing a hospital readmission model with and without race on accuracy, calibration and who gets a limited place: the effect is small either way. |
+| `utilization-as-a-label.md` | How to test whether a utilization label records access, by comparing groups at the same illness burden, shown on Healthcare Readmission. |
+| `discharge-leakage-in-readmission-models.md` | How discharge disposition can leak the outcome in a readmission model, and what end-of-life rows do to the base rate, shown on 99,492 patients. |
+| `seed-and-split-sensitivity.md` | How much a fairness gap changes with the random split seed: on 1,000 German Credit rows the spread is as large as the effect; on 32,561 rows it is tiny. |
+| `cross-validation-for-fairness.md` | Cross-validating a fairness gap with folds stratified by group and label, so every row is tested once and no fold lacks the small cells. |
+| `stratified-test-sets-for-fairness.md` | Oversampling a small group in an evaluation set to narrow its interval, and weighting rows back to the population for an overall number. |
+| `feature-importance-by-group.md` | Running permutation importance per group to see whether a model relies on different features for different people, shown on Benefits Denial. |
+| `partial-dependence-by-group.md` | Partial dependence drawn per group, with method brute so each curve averages over its own rows, and the row counts behind each point. |
+| `explanation-disagreement.md` | Comparing permutation importance, SHAP and logistic coefficients on one model, and why a fairness claim should say which method it rests on. |
+| `hiring-pipeline-adverse-impact.md` | Computing the four-fifths ratio with intervals at each hiring stage and for the whole funnel, shown on AI Fair Recruitment where the gap enters at the decision. |
+| `compounding-disparities.md` | Why stage ratios multiply: four stages at 0.90 each pass the four-fifths check and give 0.666 end to end, shown in a simulation with correlated stages too. |
+| `differential-validity.md` | Equal validity does not mean equal prediction: on AI Fair Recruitment each score has the same AUC for women and men, but women are hired less at the same score. |
+| `minimum-detectable-gap.md` | How large a fairness gap must be for an audit to detect it at 80% power, checked with the permutation test and applied to the benchmark's groups. |
+| `small-group-shrinkage.md` | Empirical-Bayes shrinkage cuts the error of small-group rates by two thirds on Healthcare Readmission, and can hide a real gap in the smallest cell. |
+| `confidence-intervals-for-ratios.md` | Intervals for a disparate impact ratio by percentile bootstrap and the log-ratio delta method, and why a near-zero denominator has no honest interval. |
+| `monitoring-fairness-in-production.md` | Control-charting a fairness gap after deployment: how batch size and window change detection delay and false alarms, simulated on Benefits Denial. |
+| `label-shift-and-fairness.md` | Which fairness metrics change under label shift: TPR and FPR gaps stay fixed while parity and precision gaps swing, shown on Benefits Denial. |
+| `delayed-feedback.md` | How late outcomes bias a monitored group gap, and counting only mature cases as the fix, simulated on 99,492 hospital discharges. |
+| `causal-graphs-for-fairness.md` | How the assumed causal graph decides which variables to adjust for: the same sex gap is -0.196, -0.157 or -0.034 depending on the adjustment set. |
+| `path-specific-effects.md` | Splitting the sex gap in income into direct and mediated paths with bootstrap intervals, and what must be assumed for the split to mean anything. |
+| `randomized-post-processing.md` | The linear programme for randomized equalized-odds post-processing on Tenant Screening: gap 0.149 down to under 0.02, with random decisions in a few rows. |
+| `fairness-accuracy-pareto-frontier.md` | A sweep of 1,681 threshold pairs on Tenant Screening gives a nearly flat frontier, and shows where the benchmark's five strategies sit against it. |
+| `choosing-a-mitigation-strategy.md` | Choosing among the five mitigation strategies from the benchmark's results: what each needs, the median accuracy cost and the gap left, over 13 pairs. |
+| `auc-gaps-by-group.md` | Per-group AUC and its gap with bootstrap and DeLong intervals: when equal AUC hides unequal errors, and when a threshold hides a real ranking gap. |
+| `decision-curve-analysis-by-group.md` | Net benefit by group against treating everyone or no one: how to read a decision curve per group and see where a model helps one group and not another. |
+| `cost-sensitive-evaluation.md` | Per-group expected cost under unequal false positive and false negative costs, the cost-optimal threshold, and how it relates to group-specific thresholds. |
+| `popularity-bias.md` | A simulated popularity feedback loop on a real audit: the shown set freezes, merit stops ordering exposure, and a group imbalance is locked in. |
+| `two-sided-fairness.md` | Exposure for the ranked side and nDCG for the searcher on one re-ranking sweep, and where fairness to one side starts to cost the other. |
+| `position-bias-and-click-models.md` | Simulated clicks from a known relevance: why a ranker trained on raw clicks learns position, how inverse propensity weighting fixes it, and its limits. |
 
 ### A good explainer should include
 
@@ -396,6 +462,14 @@ Explainers live in `explainers/` and should make one fairness concept easy to un
 | 5 | Limitations | Honest trade-offs and edge cases |
 | 6 | Related concepts | Links to other explainers or audits |
 | 7 | Further reading | 2-3 primary sources, not link farms |
+
+The `assets/explainers-data.json` entry has `slug`, `title`, `subtitle`, `summary` and `tags`, and two optional fields the build checks: `description` (the meta description, 70 to 160 characters; when it is missing the summary is cut at the last sentence that fits, and a summary that cannot be shortened sensibly fails the build) and `seo_title` (a shorter page title when `title` plus the site name would pass 65 characters, so at most 53).
+
+If the page tells the reader to run its code, say so with the path `explainers/code/<slug>.py` in the sentence just before the python block (for example: Run from the repo root (`PYTHONPATH=. python3 explainers/code/<slug>.py`; that file is generated from the block below).). `make build-explainers` writes that file from the block, removes stale ones, and the generated-files check fails if it is out of date, so never edit it by hand.
+
+Explainers with code should run against a real audit. To opt a Python fence into the smoke test, put `# runnable` on the first nonblank line inside the fence. The test executes each marked block in a subprocess from the repository root, reports the explainer and block number on failure, and applies a timeout. Add `# slow` on the next line for examples that need the longer timeout and should be skipped by `make test-fast`; the full CI test suite still runs them. Keep setup self-contained and avoid network access.
+
+ `faircode.benchmark.load_audit("Benefits Denial")` loads an audit with the same loader, encoding and train/test split as the benchmark harness, so a baseline in your explainer matches `results/`.
 
 File naming:
 
@@ -474,7 +548,9 @@ faircode benchmark --out /tmp/bump-results
 python3 scripts/diff_results.py --current /tmp/bump-results --reference results --threshold 0.001
 ```
 
-If rows moved, say so in the PR and refresh `results/` in the same PR or an immediate follow-up; if nothing moved, say that. Do not touch `paper/results-frozen/`. A benchmark rerun is not an automatic CI check because it is slow; the reviewer asks for the diff above.
+If rows moved, say so in the PR and refresh `results/` in the same PR or an immediate follow-up; if nothing moved, say that. Do not touch `paper/results-frozen/`. The rerun is slow, so it is not an automatic check. Add the `rerun-benchmark` label to the PR (or run the *Benchmark diff* workflow from the Actions tab with the PR number) and `.github/workflows/benchmark-diff.yml` reruns the full benchmark on that PR's lockfile and comments the diff, with no commit and no change to `paper/results-frozen/`.
+
+Observed on a throwaway pull request (#1142, 2026-10-24): the `refs/pull/N/merge` checkout and the locked install worked, the full benchmark took about 34 minutes on a hosted `ubuntu-latest` runner (the job limit is 120), and the comment was posted. The runner uses Python 3.12 and the reference results were made on 3.13, so the comment lists the library versions that differ; a row that moved with only a Python change is not a library effect. The moved-rows section lists at most 100 rows per kind and is cut at 50,000 characters, well under GitHub's 65,536 limit. A change to the workflow or to `scripts/diff_results.py` also runs a smoke job on one small audit before it can merge.
 
 ---
 

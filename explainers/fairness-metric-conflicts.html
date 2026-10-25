@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-05-21",
-      "dateModified": "2026-09-13"
+      "dateModified": "2026-10-24"
     },
     {
       "@type": "FAQPage",
@@ -272,7 +272,7 @@ White defendants:  {&#x27;TPR&#x27;: 0.006, &#x27;FPR&#x27;: 0.003, &#x27;PPV (P
 <p><strong>Both claims were mathematically accurate. They were measuring different things.</strong></p>
 <p>ProPublica asked: <em>do false accusations fall equally?</em> Northpointe asked: <em>when we flag someone, are we equally right?</em> Because Black defendants reoffend at a higher base rate in this dataset - itself a product of over-policing - satisfying one criterion mathematically forces the other to fail.</p>
 <hr>
-<h3 id="the-impossibility-visualised">The Impossibility Visualised</h3>
+<h3 id="detection-code-the-impossibility-visualised">Detection Code: The Impossibility Visualised</h3>
 <p>Imagine two groups with different base rates: Group A reoffends at 40%, Group B at 20%.</p>
 <p>A calibrated model (predictive parity) assigns risk scores that reflect these real rates. Now you want to equalise false positive rates - the rate at which truly low-risk people are wrongly flagged. To bring Group A&#x27;s FPR down to match Group B&#x27;s, you must raise the risk threshold for Group A. But raising the threshold also reduces Group A&#x27;s true positive rate - now you catch fewer actual reoffenders from Group A. To compensate, you&#x27;d need to lower the threshold - which raises the FPR again. The system resists. The math won&#x27;t let you square this circle.</p>
 <pre><code class="language-python">import numpy as np
@@ -407,6 +407,9 @@ print(audit)</code></pre>
 <p><strong>There is no universally correct metric.</strong> The choice depends on the domain, the asymmetry between error types, and a normative judgment about whose interests to protect. A hiring algorithm and a medical screening tool warrant different choices, for substantive ethical reasons - not because the math differs.</p>
 <p><strong>Metric satisfaction does not prove fairness.</strong> A model can satisfy demographic parity by systematically reducing outcomes for an advantaged group rather than improving them for a disadvantaged group. Parity in mediocrity is not justice. Always inspect absolute rates, not just gaps.</p>
 <p><strong>Intersectionality is not captured by pairwise audits.</strong> Auditing by race and by gender separately misses discrimination against Black women specifically, or other intersecting identities. Pairwise metrics pass while intersectional disparities persist. True auditing requires disaggregating by all relevant combinations - which is why large, representative datasets are a prerequisite.</p>
+<hr>
+<h3 id="related-concepts">Related Concepts</h3>
+<ul><li><a href="choosing-a-fairness-metric.html">Choosing a Fairness Metric</a> - a decision path from the harm to the metric</li></ul>
 <hr>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../index.html#project-compas"><code>COMPAS/</code></a> - The ProPublica / Northpointe conflict is a direct illustration of this metric incompatibility</li><li><a href="equalized-odds.html"><code>explainers/equalized-odds.md</code></a> - Deep dive on the error-rate fairness metric</li><li><a href="demographic-parity.html"><code>explainers/demographic-parity.md</code></a> - Deep dive on the equal-outcome-rate metric (the third leg of the impossibility triangle)</li><li><a href="proxy-variables.html"><code>explainers/proxy-variables.md</code></a> - How corrupted base rates flow into metric calculations</li><li><a href="disparate-impact.html"><code>explainers/disparate-impact.md</code></a> - The legal metric (demographic parity under the 80% rule) and its limits</li><li><a href="sampling-bias.html"><code>explainers/sampling-bias.md</code></a> - Why ground truth in training data may not be true</li></ul>

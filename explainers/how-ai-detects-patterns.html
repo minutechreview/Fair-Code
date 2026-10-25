@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>How AI Detects Patterns · Fair Code</title>
-<meta name="description" content="Learn how a Random Forest finds patterns through splits, tree aggregation, and feature importance. See why a high importance score means reliance, not justification.">
+<meta name="description" content="Learn how a Random Forest finds patterns through splits, tree aggregation, and feature importance.">
 <link rel="canonical" href="https://www.thefaircode.xyz/explainers/how-ai-detects-patterns.html">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
 <meta property="og:title" content="How AI Detects Patterns · Fair Code">
-<meta property="og:description" content="Learn how a Random Forest finds patterns through splits, tree aggregation, and feature importance. See why a high importance score means reliance, not justification.">
+<meta property="og:description" content="Learn how a Random Forest finds patterns through splits, tree aggregation, and feature importance.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://www.thefaircode.xyz/explainers/how-ai-detects-patterns.html">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og/how-ai-detects-patterns.png">
@@ -26,7 +26,7 @@
 <meta property="og:image:alt" content="How AI Detects Patterns · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="How AI Detects Patterns · Fair Code">
-<meta name="twitter:description" content="Learn how a Random Forest finds patterns through splits, tree aggregation, and feature importance. See why a high importance score means reliance, not justification.">
+<meta name="twitter:description" content="Learn how a Random Forest finds patterns through splits, tree aggregation, and feature importance.">
 <meta name="twitter:image" content="https://www.thefaircode.xyz/assets/og/how-ai-detects-patterns.png">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-06-12",
-      "dateModified": "2026-09-26"
+      "dateModified": "2026-10-24"
     },
     {
       "@type": "FAQPage",
@@ -195,7 +195,7 @@
 <h3 id="why-it-matters">Why It Matters</h3>
 <p>Every audit in this repo runs on the same underlying mechanism: a Random Forest Classifier finds patterns in <code>unfair.py</code> and the exact same patterns, minus a few columns, in <code>fair.py</code>. The gap between those two runs is the entire story of algorithmic bias. In hiring, lending, healthcare, and criminal justice, the &quot;pattern&quot; the model found was often a historical record of who got hired, approved, treated, or detained - not a measure of who deserved to be.</p>
 <p>The non-obvious part is this: pattern detection has no concept of &quot;should.&quot; A Random Forest does not know that <code>CustodyStatus</code> reflects decades of over-policing rather than individual criminality. It only knows that <code>CustodyStatus</code> and <code>race</code> move together, and that both move together with the recidivism label. From the model&#x27;s point of view, a proxy and a cause look identical - both are just columns with high feature importance.</p>
-<h3 id="how-pattern-detection-works">How Pattern Detection Works</h3>
+<h3 id="how-the-pattern-search-works">How the Pattern Search Works</h3>
 <p>A Random Forest Classifier - the model used across every audit in this repo - detects patterns through three mechanisms working together.</p>
 <h4 id="1-splitting-on-feature-thresholds">1. Splitting on feature thresholds</h4>
 <p>Each decision tree in the forest repeatedly asks yes/no questions about feature values: &quot;Is <code>employment</code> ≥ 7 years?&quot;, &quot;Is <code>payer_code</code> == Medicaid?&quot;. A split is chosen because it best separates the training examples by outcome. The tree does not ask whether the split is <em>fair</em> - only whether it is <em>informative</em>.</p>
@@ -289,7 +289,7 @@ def flag_correlated_patterns(df, protected_attr, candidate_features, threshold=0
 <h4 id="4-pattern-detection-cannot-tell-you-which-patterns-are-legitimate">4. Pattern detection cannot tell you which patterns are legitimate</h4>
 <p>A Random Forest treats <code>education.num</code> and <code>relationship</code> identically: both are columns with non-zero importance. Whether <code>education.num</code> is a legitimate signal for income prediction and <code>relationship</code> is an illegitimate proxy for sex is a question the algorithm has no way to answer. That judgment has to come from the proxy analysis step, performed by a human, before training.</p>
 <h3 id="related-concepts">Related Concepts</h3>
-<ul><li><a href="proxy-variables.html">What Is a Proxy Variable?</a> - explains why patterns the model detects can carry protected-class signal even when the protected column itself is removed.</li><li><a href="neural-networks.html">What Happens Inside a Neural Network?</a> - covers pattern detection in a different model family, where patterns are encoded as learned weights rather than tree splits.</li><li><a href="shap-values.html">What Are SHAP Values?</a> - a more granular way to inspect which patterns drove a single prediction, not just the model as a whole.</li><li><a href="proxy-entanglement.html">What Is Proxy Entanglement?</a> - what happens when a detected pattern is spread across multiple correlated features instead of concentrated in one.</li></ul>
+<ul><li><a href="proxy-variables.html">What Is a Proxy Variable?</a> - explains why patterns the model detects can carry protected-class signal even when the protected column itself is removed.</li><li><a href="neural-networks.html">What Happens Inside a Neural Network?</a> - covers pattern detection in a different model family, where patterns are encoded as learned weights rather than tree splits.</li><li><a href="shap-values.html">What Are SHAP Values?</a> - a more granular way to inspect which patterns drove a single prediction, not just the model as a whole.</li><li><a href="proxy-entanglement.html">What Is Proxy Entanglement?</a> - what happens when a detected pattern is spread across multiple correlated features instead of concentrated in one.</li><li><a href="unsupervised-learning.html">What Is Unsupervised Learning?</a> - clustering as pattern detection</li></ul>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../index.html#project-compas"><code>COMPAS/</code></a> - the clearest example of a model detecting a pattern (race-correlated custody history) that mirrors a discriminatory outcome rather than a behavioral one.</li><li><a href="../index.html#project-readmission"><code>Healthcare Readmission/</code></a> - shows pattern detection across an entangled cluster of administrative features, where no single feature&#x27;s importance score tells the full story.</li><li><a href="../index.html#project-hiring"><code>AI Fair Recruitment/</code></a> - shows a clean before/after where the patterns driving 96.1% of the fairness gap were concentrated in just two features (<code>gender</code>, <code>age</code>).</li></ul>
 <h3 id="further-reading">Further Reading</h3>

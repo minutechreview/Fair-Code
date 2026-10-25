@@ -162,10 +162,14 @@ def test_hidden_first_sheet_python(tmp_path):
     assert df.empty
 
 
-def _date_workbook():
+def _date_workbook(date1904=False):
     import datetime
 
     wb = openpyxl.Workbook()
+    if date1904:
+        from openpyxl.utils.datetime import CALENDAR_MAC_1904
+
+        wb.epoch = CALENDAR_MAC_1904
     ws = wb.active
     ws.append(["sex", "race", "ethnicity"])
     for i in range(60):
@@ -179,11 +183,13 @@ def _date_workbook():
 
 @requires_openpyxl
 @pytest.mark.parametrize("tz", ["UTC", "America/New_York", "Asia/Kolkata"])
-def test_xlsx_date_cells_get_the_same_labels_in_both_engines(tmp_path, tz):
-    """#1039: a date cell is '2020-01-01 00:00:00' in pandas; the web engine used the Excel serial (43831)."""
+@pytest.mark.parametrize("date1904", [False, True], ids=["1900", "1904"])
+def test_xlsx_date_cells_get_the_same_labels_in_both_engines(tmp_path, tz, date1904):
+    """#1039: a date cell is '2020-01-01 00:00:00' in pandas; the web engine used the Excel serial (43831).
+    #1076: a 1904-system workbook gets the same labels too, not dates four years and a day early."""
     import os
 
-    path = _save_workbook(tmp_path, _date_workbook(), "dates.xlsx")
+    path = _save_workbook(tmp_path, _date_workbook(date1904), "dates.xlsx")
     py = {d["name"]: sorted(g["label"] for g in d["groups"])
           for d in __import__("faircode").profile(read_table(str(path)))["dimensions"]}
     result = subprocess.run(
@@ -196,3 +202,41 @@ def test_xlsx_date_cells_get_the_same_labels_in_both_engines(tmp_path, tz):
     assert py["race"] == ["2020-01-01 00:00:00", "2021-06-15 10:30:15"]
     assert py["ethnicity"] == ["09:05:00"]
     assert js == py
+
+
+@requires_openpyxl
+def test_xlsx_numeric_header_cells_are_text_in_both_engines(tmp_path):
+    """#1045: a header cell holding the number 2020 is the column "2020" (text) in Python, as in the web engine."""
+    from faircode import profile
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append([2020, "sex"])
+    for i in range(30):
+        ws.append([i % 3, "m" if i % 2 else "f"])
+    path = _save_workbook(tmp_path, wb, "numeric_header.xlsx")
+    py = [d["name"] for d in profile(read_table(str(path)))["dimensions"]]
+    result = _run_js_parse(path)
+    assert result.returncode == 0, result.stderr
+    js = [d["name"] for d in json.loads(result.stdout)["dimensions"]]
+    assert py == js == ["2020", "sex"]
+    assert all(isinstance(name, str) for name in py)
+
+
+@requires_openpyxl
+def test_xlsx_boolean_header_cells_match_python_text_in_both_engines(tmp_path):
+    """#1143: boolean headers use Python's "True"/"False" spelling, without changing text headers."""
+    from faircode import profile
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append([True, False, "TRUE", "FALSE", "sex"])
+    for i in range(30):
+        ws.append([i % 3, (i + 1) % 2, i % 2, (i + 1) % 2, "m" if i % 2 else "f"])
+    path = _save_workbook(tmp_path, wb, "boolean_header.xlsx")
+    py = [d["name"] for d in profile(read_table(str(path)))["dimensions"]]
+    result = _run_js_parse(path)
+    assert result.returncode == 0, result.stderr
+    js = [d["name"] for d in json.loads(result.stdout)["dimensions"]]
+    assert py == js == ["True", "False", "TRUE", "FALSE", "sex"]
+    assert all(isinstance(name, str) for name in py)

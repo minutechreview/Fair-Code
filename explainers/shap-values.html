@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-05-19",
-      "dateModified": "2026-09-19"
+      "dateModified": "2026-10-24"
     },
     {
       "@type": "FAQPage",
@@ -267,7 +267,7 @@ MaritalStatus_Married       0.0270
 MaritalStatus_Divorced      0.0195</code></pre>
 <p>Race is gone from the feature set. The model now distributes influence across legitimate remaining features. SHAP confirms the fix worked - not just at the aggregate fairness gap level, but at the level of individual decision logic.</p>
 <hr>
-<h3 id="how-to-use-shap-in-practice">How to Use SHAP in Practice</h3>
+<h3 id="detection-code-how-to-use-shap-in-practice">Detection Code: How to Use SHAP in Practice</h3>
 <h4 id="installation">Installation</h4>
 <pre><code class="language-bash">pip install shap</code></pre>
 <h4 id="for-tree-models-random-forest-xgboost-lightgbm">For Tree Models (Random Forest, XGBoost, LightGBM)</h4>
@@ -349,6 +349,9 @@ CustodyStatus_Probation       0.016462 PROTECTED OR PROXY
 <p>Explainability is not a nice-to-have. It is the mechanism by which accountability becomes possible. A person denied a loan, flagged as high-risk in a courtroom, or rejected by a hiring algorithm has a legitimate interest in knowing why. A company deploying these systems has a legal and ethical obligation to be able to answer that question.</p>
 <p>SHAP values do not fix bias. Removing protected attributes and proxy variables fixes bias. What SHAP does is make the model&#x27;s reasoning visible - so you can catch problems before deployment, explain decisions to the people affected by them, and demonstrate to auditors and regulators that the system is operating as intended.</p>
 <p>The pipeline is not complete until you can explain every decision the model makes.</p>
+<hr>
+<h3 id="related-concepts">Related Concepts</h3>
+<ul><li><a href="lime.html">What Is LIME?</a> - a local surrogate compared with exact attributions</li></ul>
 <hr>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../index.html#project-compas"><code>COMPAS/</code></a> - The biased and fair models where SHAP reveals race as the top driver</li><li><a href="../index.html#project-hiring"><code>AI Fair Recruitment/</code></a> - Gender + age influence exposed via feature attribution</li><li><a href="../index.html#project-credit"><code>German Credit Lending/</code></a> - Age and tenure SHAP contributions before and after mitigation</li><li><a href="proxy-variables.html"><code>explainers/proxy-variables.md</code></a> - What proxy variables are and how to detect them</li><li><a href="sampling-bias.html"><code>explainers/sampling-bias.md</code></a> - Why your training data may not represent the people your model affects</li></ul>

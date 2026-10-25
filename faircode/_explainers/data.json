@@ -123,6 +123,7 @@
     "title": "What Is Machine Learning Bias?",
     "subtitle": "Four entry points. One pipeline. Measurable everywhere.",
     "summary": "Understand how bias enters AI systems through training data, labels, proxy variables, and feedback loops - with detection code and real examples from every audit in this repo.",
+    "description": "How bias enters AI systems through training data, labels, proxy variables and feedback loops, with detection code and examples from every audit.",
     "tags": ["detection", "data", "explainability"]
   },
   {
@@ -130,6 +131,7 @@
     "title": "What Is Data Leakage?",
     "subtitle": "When the model has already seen the answer sheet.",
     "summary": "Data leakage contaminates a model's training signal with information unavailable at deployment, producing evaluation scores that overstate real-world performance. Learn to identify target leakage and train-test contamination - and detect both before they ship.",
+    "description": "How data leakage inflates evaluation scores with information unavailable at deployment, and how to detect target leakage and train-test contamination.",
     "tags": ["data", "detection"]
   },
   {
@@ -165,13 +167,16 @@
     "title": "Predictive Parity",
     "subtitle": "Equally trustworthy is not the same as equally fair",
     "summary": "Learn why Positive Predictive Value equal across groups is a real fairness property, and why the 2016 ProPublica vs Northpointe COMPAS dispute shows it can hold while one group absorbs a much higher false-positive rate.",
+    "description": "Why equal positive predictive value is a real fairness property, and how the ProPublica vs Northpointe COMPAS dispute shows it can hide a false-positive gap.",
     "tags": ["metrics", "detection"]
   },
   {
     "slug": "false-positives-vs-false-negatives",
     "title": "False Positives vs. False Negatives in Medical Risk Models",
+    "seo_title": "False Positives vs. False Negatives in Medical AI",
     "subtitle": "When a missed high-risk flag costs more than a false alarm",
     "summary": "Learn why a single accuracy or AUC number can hide two very different kinds of mistakes, and why a missed diagnosis and a false alarm are almost never equally costly. See how one global decision threshold can produce equal overall accuracy while still leaving very different false negative rates across demographic groups.",
+    "description": "Why one accuracy or AUC number hides two different mistakes, and how a single decision threshold leaves very different false negative rates by group.",
     "tags": ["metrics", "detection"]
   },
   {
@@ -186,6 +191,7 @@
     "title": "What Is Unsupervised Learning?",
     "subtitle": "It found the split on its own, because the split was already in the data",
     "summary": "See how k-means clustering on the Benefits Denial dataset recovers a strong sex split (89.3% male in one cluster) and a real race split without sex, race, or national origin ever being part of the feature set. Includes detection code that clusters on non-protected features, then checks the result for demographic skew.",
+    "description": "How k-means on the Benefits Denial data recovers a sex and race split without those columns, with code that clusters on non-protected features.",
     "tags": ["detection", "explainability", "case-study"]
   },
   {
@@ -193,6 +199,7 @@
     "title": "What Is Model Drift?",
     "subtitle": "A fairness audit is a photograph of a moving room",
     "summary": "Learn why a fairness gap measured once at launch is not guaranteed to hold months later, and how rolling-window monitoring catches the drift a single audit snapshot misses. Re-measures the German Credit Lending age gap across five sequential windows (4.3%-15.1%) with PSI and a Page-Hinkley change-point test as detection code.",
+    "description": "Why a fairness gap measured once at launch need not hold later, and how rolling windows, PSI and a change-point test catch drift in the German Credit age gap.",
     "tags": ["detection", "data"]
   },
   {
@@ -207,6 +214,7 @@
     "title": "What Is Automation Bias?",
     "subtitle": "When humans defer to algorithms, bias gets automated too.",
     "summary": "Understand why judges, recruiters, and clinicians follow AI scores even when they know the scores are biased - and how automation bias amplifies disparities beyond what the model alone produces. Includes detection code measuring disparity amplification in human-in-the-loop decisions, mitigation strategies, and the COMPAS courtroom case study.",
+    "description": "Why judges, recruiters and clinicians follow AI scores they know are biased, and how automation bias amplifies disparities. Includes the COMPAS courtroom case.",
     "tags": ["detection", "metrics", "explainability"]
   },
   {
@@ -214,6 +222,7 @@
     "title": "What Is a ROC Curve and AUC?",
     "subtitle": "Why one threshold-free score can look great and still be unfair.",
     "summary": "Learn what a ROC curve and its area (AUC) actually measure - the model's ability to rank cases by risk - and why that single headline number hides the two things fairness depends on: where you set the decision threshold, and whether ranking quality is equal across groups. See how COMPAS's ordinary 0.68 baseline AUC (frozen from paper/results-frozen) sat on top of a large racial false-positive gap. Includes detection code for per-group AUC and overlaid ROC curves.",
+    "description": "What a ROC curve and AUC measure, why one AUC hides threshold choice and per-group ranking quality, and how to compute per-group AUC and overlaid ROC curves.",
     "tags": ["metrics", "detection"]
   },
   {
@@ -221,6 +230,7 @@
     "title": "What Is Class Imbalance?",
     "subtitle": "When a 99% accuracy score just means the model ignored the 1% that mattered.",
     "summary": "Learn why skewed positive/negative ratios wreck naive accuracy and disproportionately hurt minority subgroups, and how common fixes (oversampling, undersampling, SMOTE, class weights) can either help or introduce new bias.",
+    "description": "How skewed positive and negative ratios wreck accuracy and hurt minority subgroups, and when oversampling, SMOTE or class weights help or add new bias.",
     "tags": ["data", "metrics", "detection"]
   },
   {
@@ -228,6 +238,7 @@
     "title": "What Is the Bias-Variance Trade-off?",
     "subtitle": "Why an overfit model can memorize the majority and fail the minority.",
     "summary": "Learn the difference between statistical bias and societal bias, and see how the classic trade-off between underfitting and overfitting impacts fairness across demographic groups.",
+    "description": "The difference between statistical bias and societal bias, and how the trade-off between underfitting and overfitting plays out across demographic groups.",
     "tags": ["detection", "explainability", "data"]
   },
   {
@@ -235,6 +246,7 @@
     "title": "What Is a Confusion Matrix?",
     "subtitle": "The foundational building block behind most fairness metrics.",
     "summary": "Learn how a confusion matrix breaks down accuracy into true positives, true negatives, false positives, and false negatives, and why derived metrics like FPR and FNR are essential for detecting bias.",
+    "description": "How a confusion matrix splits accuracy into true and false positives and negatives, and why rates like FPR and FNR are essential for detecting bias.",
     "tags": ["metrics", "explainability"]
   },
   {
@@ -256,6 +268,7 @@
     "title": "Miscalibration in Clinical Risk Scores Across Groups",
     "subtitle": "The same risk score can mean a different real-world risk depending on the patient's group.",
     "summary": "Learn why a clinical risk score that is well-calibrated on average can still be miscalibrated for a specific patient group, so identical scores carry different real-world stakes. Covers reliability diagrams, calibration slope and intercept per group, why a shared score can be calibrated to the wrong target (as in Obermeyer et al. 2019), and why small subgroups make high-risk calibration hardest to verify. Anchored to the Healthcare Readmission audit with per-group reliability and calibration-slope detection code.",
+    "description": "Why a clinical risk score calibrated on average can be miscalibrated for one patient group, with reliability diagrams and per-group calibration slope code.",
     "tags": ["metrics", "detection", "healthcare"]
   },
   {
@@ -263,20 +276,25 @@
     "title": "Missing Data as Bias in Electronic Health Records",
     "subtitle": "A patient with fewer recorded labs and visits is less-observed, not lower-risk.",
     "summary": "Learn how unequal access to care turns into unequal missingness in EHR data, and why a model reading a blank field as 'nothing notable happened' is actually reading 'this group is observed less.' Covers the MCAR/MAR/MNAR framework, why naive imputation and row-dropping both make access-driven missingness worse, and why a missingness indicator can become a new proxy for the protected attribute it was meant to work around. Anchored to real missingness rates computed directly from the Healthcare Readmission dataset (a 10.7-point payer-code gap by race), with detection code that flags MNAR candidates by group.",
+    "description": "How unequal access to care becomes unequal missingness in EHR data, why imputation and row-dropping make it worse, and how to flag MNAR candidates by group.",
     "tags": ["data", "detection", "healthcare"]
   },
   {
     "slug": "medical-imaging-representation-gaps",
     "title": "Why Medical Imaging Models Fail on Underrepresented Groups",
+    "seo_title": "Why Medical Imaging Models Fail Some Groups",
     "subtitle": "A model trained mostly on one group's images has barely seen the others.",
     "summary": "Learn why dermatology, radiology, and retinal imaging models underperform on groups thin in the training data, and the more insidious failure mode of shortcut learning, where a model keys off a confounder like scanner type or hospital site instead of the pathology. Covers the difference between a representation gap and shortcut confounding, why internal validation cannot rule out either, and per-group AUC plus proxy-detection code. Anchored to two documented real-world cases: Zech et al. (2018)'s hospital-site shortcut in pneumonia detection and Larrazabal et al. (2020)'s sex-imbalance study in chest X-ray diagnosis.",
+    "description": "Why imaging models underperform on groups thin in training data, and how shortcut learning from scanner or site differs from a representation gap.",
     "tags": ["data", "detection", "healthcare", "case-study"]
   },
   {
     "slug": "obermeyer-cost-proxy",
     "title": "The Obermeyer Case: When Cost Becomes a Proxy for Health Need",
+    "seo_title": "The Obermeyer Case: Cost as a Proxy for Health Need",
     "subtitle": "How predicting healthcare spending instead of illness systematically under-refers sicker Black patients.",
     "summary": "Explore the canonical case study of Obermeyer et al. (2019): why using healthcare cost as a target variable creates racial bias, how historical spending disparities corrupt algorithm predictions, and how to audit models for proxy label bias using the Healthcare Readmission audit.",
+    "description": "The Obermeyer et al. (2019) case: why healthcare cost as a target creates racial bias, and how to audit a model for proxy label bias.",
     "tags": ["data", "detection", "metrics", "healthcare", "case-study"]
   },
   {
@@ -284,6 +302,7 @@
     "title": "Underdiagnosis Bias in Healthcare AI",
     "subtitle": "When the label itself is sicker for one group.",
     "summary": "Learn how historical gaps in diagnostic testing and healthcare access cause ground-truth labels to under-count active disease in underserved groups - training models to systematically under-flag those exact patients. Covers the gap between true disease state and recorded EHR labels, why standard audits fail to catch unobserved false negatives, and biomarker-to-label consistency detection code.",
+    "description": "How gaps in diagnostic testing leave recorded labels under-counting disease in underserved groups, and how to check biomarker-to-label consistency.",
     "tags": ["data", "detection", "metrics", "healthcare", "case-study"]
   },
   {
@@ -291,6 +310,7 @@
     "title": "Race Correction in Clinical Algorithms",
     "subtitle": "Why race-adjusted clinical formulas bake bias directly into the math.",
     "summary": "Learn how race coefficients in formulas like eGFR kidney function, spirometry lung reference values, and the VBAC calculator delay care for Black and minority patients, why removing them is complex, and how to detect explicit race multipliers in clinical code.",
+    "description": "How race coefficients in eGFR, spirometry and VBAC formulas delay care for Black patients, why removing them is hard, and how to detect them in code.",
     "tags": ["data", "detection", "metrics", "healthcare", "case-study"]
   },
   {
@@ -298,6 +318,7 @@
     "title": "What Is Reject Inference?",
     "subtitle": "Why models trained only on approved applicants miss the risk of everyone else.",
     "summary": "Learn how missing ground-truth outcomes for rejected applicants create sample selection bias in lending, hiring, and insurance models, and how correction techniques like IPW, parceling, and Heckman models attempt to fix it. Anchored to German Credit Lending with Python simulation and correction code.",
+    "description": "How missing outcomes for rejected applicants create sample selection bias in lending, and how IPW, parceling and Heckman models try to correct it.",
     "tags": ["data", "detection", "metrics"]
   },
   {
@@ -305,6 +326,7 @@
     "title": "What Is the Base Rate Fallacy?",
     "subtitle": "Why ignoring background prevalence makes screening tools mostly wrong - and drives fairness metric conflicts.",
     "summary": "Learn how ignoring base rates leads to high false-alarm rates in screening algorithms, and why differing base rates across demographic groups make predictive parity and equalized odds mathematically incompatible. Covers Bayes' Theorem, PPV under low prevalence, the Chouldechova trade-off identity, and COMPAS audit detection code.",
+    "description": "How ignoring base rates inflates false alarms in screening, and why different base rates make predictive parity and equalized odds incompatible.",
     "tags": ["metrics", "detection", "explainability"]
   },
   {
@@ -312,13 +334,16 @@
     "title": "What Is a Precision-Recall Curve?",
     "subtitle": "Why ROC/AUC looks fine while precision collapses under class imbalance.",
     "summary": "Learn what a precision-recall curve and average precision (AP) measure, and why they're the honest picture under the heavy class imbalance most fairness audits live in - rare positives, skewed base rates - where ROC/AUC's own arithmetic stays lenient. Anchored to Healthcare Readmission's 11.2% base rate (frozen 88.7% accuracy, 0.62 AUC, but 0.039 F1), with per-group average-precision detection code.",
+    "description": "What precision-recall curves and average precision measure, and why they are the honest picture under the class imbalance of most fairness audits.",
     "tags": ["metrics", "detection"]
   },
   {
     "slug": "equal-opportunity",
     "title": "What Is Equal Opportunity (and How It Differs From Equalized Odds)?",
+    "seo_title": "Equal Opportunity vs Equalized Odds",
     "subtitle": "Passing the true-positive-rate check doesn't mean passing the false-positive-rate one.",
     "summary": "Learn why Equal Opportunity only requires an equal true positive rate across groups, and how that relaxation can hide a false-positive-rate gap that Equalized Odds would catch. Uses two real frozen results: COMPAS, where the two metrics coincide, and Tenant Screening, where they diverge.",
+    "description": "Why Equal Opportunity only equalizes true positive rates, and how that can hide a false-positive gap that Equalized Odds catches, shown on two audits.",
     "tags": ["metrics"]
   },
   {
@@ -326,6 +351,7 @@
     "title": "What Is Intersectional Bias?",
     "subtitle": "Checking one protected attribute at a time can hide harm concentrated at the intersection.",
     "summary": "Learn why a fairness gap can be larger at the intersection of two protected attributes than either attribute's own single-axis check would predict - a compounding effect Crenshaw (1989) named intersectionality. Anchored to Benefits Denial's real, frozen superadditive gap for sex x national origin, with crosstab detection code and a pointer to the Open Dataset Profiler's own intersectional representation check.",
+    "description": "Why a fairness gap can be larger at the intersection of two attributes than either single check predicts, shown on Benefits Denial with crosstab code.",
     "tags": ["metrics", "detection"]
   },
   {
@@ -333,20 +359,25 @@
     "title": "What Is Accuracy Equality?",
     "subtitle": "Equal accuracy across groups can hide two completely different, offsetting error profiles.",
     "summary": "Learn why Accuracy Equality only checks overall accuracy, and how a small accuracy gap can sit right next to a huge Equalized Odds gap on the exact same model. Uses COMPAS's real frozen numbers: a 3.5-point accuracy gap next to a 92.6-point Equalized Odds gap, driven by the true-positive-rate difference.",
+    "description": "Why Accuracy Equality checks only overall accuracy, and how a 3.5-point accuracy gap sits beside a 92.6-point Equalized Odds gap on COMPAS.",
     "tags": ["metrics"]
   },
   {
     "slug": "bootstrap-confidence-intervals",
     "title": "What Is a Bootstrap Confidence Interval (and a Permutation Test)?",
+    "seo_title": "Bootstrap Confidence Intervals and Permutation Tests",
     "subtitle": "A fairness gap without an interval attached is a number, not a finding.",
     "summary": "Learn how bootstrap resampling estimates a confidence interval and a permutation test estimates a p-value for any fairness gap, and why both matter most on the small subgroups audits routinely hit. Contrasts two real frozen COMPAS results: a tight, clearly significant Equal Opportunity gap and a wide, inconclusive Predictive Parity gap measured from just 6 rows.",
+    "description": "How bootstrap resampling gives a confidence interval and a permutation test gives a p-value for any fairness gap, and why both matter on small subgroups.",
     "tags": ["metrics", "detection"]
   },
   {
     "slug": "mitigation-strategies",
     "title": "What Are Pre-, In-, and Post-Processing Fairness Mitigations?",
+    "seo_title": "Pre-, In-, and Post-Processing Fairness Mitigations",
     "subtitle": "Where in the pipeline you intervene changes what a fairness fix can and can't do.",
     "summary": "Learn the three families of fairness intervention - pre-processing, in-processing, and post-processing - through this repo's own five-strategy benchmark ladder. Anchored to COMPAS's real frozen progression (85.5% to 17.2% to 11.5% to -1.4% to 2.3% demographic parity gap), showing the three approaches converge rather than compound.",
+    "description": "The three families of fairness intervention (pre-, in- and post-processing) through the repo's five-strategy benchmark ladder, with COMPAS results.",
     "tags": ["metrics", "data"]
   },
   {
@@ -354,6 +385,7 @@
     "title": "Why Fairness Through Unawareness Fails",
     "subtitle": "Removing the protected attribute doesn't remove what correlates with it.",
     "summary": "Learn why dropping a protected attribute from a model's inputs is not the fairness fix it appears to be, using Tenant Screening's real frozen result: removing race from the model increased the demographic parity gap from 6.0 to 10.5 points, rather than closing it.",
+    "description": "Why dropping a protected attribute from a model's inputs is not a fairness fix, shown on Tenant Screening where removing race widened the gap.",
     "tags": ["data", "detection"]
   },
   {
@@ -361,20 +393,25 @@
     "title": "What Is LIME?",
     "subtitle": "A local, approximate surrogate model - the other major way to explain one prediction.",
     "summary": "Learn how LIME perturbs an input, fits a simple local model around it, and reads the surrogate's coefficients as an explanation - and why that approximation is a real trade-off against SHAP's exact, game-theoretic guarantees. Uses the same COMPAS prediction SHAP Values explains, for direct comparison.",
+    "description": "How LIME perturbs an input, fits a simple local model and reads its coefficients as an explanation, and how that trade-off compares with SHAP on COMPAS.",
     "tags": ["explainability"]
   },
   {
     "slug": "counterfactual-explanation",
     "title": "What Is a Counterfactual Explanation? (And How It Differs From Counterfactual Fairness)",
+    "seo_title": "What Is a Counterfactual Explanation?",
     "subtitle": "One asks what changed the outcome. The other asks whether the outcome should have changed at all.",
     "summary": "Learn what a counterfactual explanation is - the smallest input change that flips one specific decision - and why it's a different concept from Counterfactual Fairness despite the shared name. Covers the basis for real adverse-action notices in lending, with a from-scratch nearest-counterfactual search over German Credit Lending.",
+    "description": "What a counterfactual explanation is, why it differs from Counterfactual Fairness, and a from-scratch nearest-counterfactual search on German Credit.",
     "tags": ["explainability"]
   },
   {
     "slug": "multiple-comparisons",
     "title": "What Is a Multiple-Comparisons Correction (Bonferroni, Holm, and False Discovery Rate)?",
+    "seo_title": "Multiple-Comparisons Correction for Fairness Audits",
     "subtitle": "Run enough p-values at 0.05 and some will read \"significant\" by chance alone.",
     "summary": "Learn what Bonferroni, Holm, and Benjamini-Hochberg false discovery rate corrections actually do to a batch of p-values, and why this repo's own benchmark harness - dozens of p-values per audit, 1,320 in total - needs one. Applies all three to COMPAS's real 90-p-value slice from paper/results-frozen/results_fairness.csv, verified against statsmodels, showing exactly which \"significant\" findings survive correction and which don't.",
+    "description": "What Bonferroni, Holm and Benjamini-Hochberg corrections do to a batch of p-values, and why a benchmark with 1,320 of them needs one.",
     "tags": ["metrics", "detection"]
   },
   {
@@ -382,6 +419,7 @@
     "title": "What Is the Fairness-Accuracy Trade-off?",
     "subtitle": "Closing a fairness gap is rarely free, and the cost isn't always the same size.",
     "summary": "Learn why fairness-mitigation strategies that shrink a demographic parity gap often also reduce model accuracy, using COMPAS's real frozen numbers across all five strategies (accuracy falling from 65.3% to as low as 53.9% as the demographic parity gap closes from 85.5% toward roughly zero) - and why the trade-off isn't a fixed, linear cost.",
+    "description": "Why mitigation that shrinks a parity gap often costs accuracy, shown across all five strategies on COMPAS, and why the trade-off is not fixed.",
     "tags": ["metrics", "data"]
   },
   {
@@ -389,6 +427,7 @@
     "title": "What Is Treatment Equality?",
     "subtitle": "Equal error rates across groups can still hide opposite-skewed error types within each group.",
     "summary": "Learn why Treatment Equality checks the ratio of false negatives to false positives within each group, not the individual rates Equalized Odds already compares. Uses COMPAS's real (freshly computed, not frozen) confusion matrix: a 0.13 FN:FP ratio for African-American defendants against a 31.0 ratio for Caucasian defendants on the same baseline model.",
+    "description": "Why Treatment Equality compares the ratio of false negatives to false positives within each group, with a COMPAS confusion matrix as the worked example.",
     "tags": ["metrics"]
   },
   {
@@ -396,6 +435,7 @@
     "title": "What Is Simpson's Paradox in Fairness Audits?",
     "subtitle": "A gap that shows up in the aggregate can shrink, vanish, or reverse once you disaggregate.",
     "summary": "Learn why an aggregate fairness metric is a weighted average of within-stratum rates, so pooling groups of different sizes can manufacture or flip a disparity. Uses the Benefits Denial (Adult Census) audit: the aggregate sex income gap of +19.6 pp collapses to roughly +3 pp within marital-status strata and reverses to -0.9 pp inside the largest one.",
+    "description": "Why an aggregate fairness metric is a weighted average of within-group rates, so pooling can create or flip a disparity, shown on Benefits Denial.",
     "tags": ["metrics", "data", "detection"]
   },
   {
@@ -403,20 +443,25 @@
     "title": "What Is Conditional Demographic Parity?",
     "subtitle": "Checking parity within strata of a chosen legitimate factor, not across the whole population.",
     "summary": "Learn how conditional demographic parity refines plain demographic parity by stratifying on an explicitly chosen legitimate factor, and why the choice of that factor decides the answer. Uses the Benefits Denial (Adult Census) audit: conditioning the +19.6 pp sex income gap on education leaves it at +18.4 pp, while conditioning on marital status removes about 84% of it.",
+    "description": "How conditional demographic parity stratifies on a legitimate factor, and why the factor you choose decides the answer, shown on Benefits Denial.",
     "tags": ["metrics", "detection"]
   },
   {
     "slug": "subgroup-fairness",
     "title": "What Is Subgroup Fairness (and Fairness Gerrymandering)?",
+    "seo_title": "Subgroup Fairness and Fairness Gerrymandering",
     "subtitle": "Passing a fairness check on every attribute separately is not the same as passing it on every combination.",
     "summary": "Learn how a model can satisfy a fairness metric on each protected attribute individually yet fail on an algorithmically-discoverable subgroup, and how a brute-force subgroup scan differs from this repo's fixed-pair --cross. Uses the Healthcare Readmission audit: the gender readmission gap is 0.19 pp overall but -5.15 pp inside the Asian patient subgroup.",
+    "description": "How a model can pass a fairness metric on each attribute yet fail on a discoverable subgroup, and how a subgroup scan differs from a fixed pair.",
     "tags": ["metrics", "detection"]
   },
   {
     "slug": "differential-privacy",
     "title": "What Is Differential Privacy (and Its Tension With Fairness)?",
+    "seo_title": "Differential Privacy and Its Tension With Fairness",
     "subtitle": "The accuracy cost of a privacy guarantee falls hardest on underrepresented groups.",
     "summary": "Learn how DP-SGD's gradient clipping and noise addition disproportionately degrade accuracy for minority subgroups, so adding a privacy guarantee to a bias-mitigation pipeline is not free. Illustrative example from Bagdasaryan, Poursaeed and Shmatikov (NeurIPS 2019), plus a runnable DP-SGD noise-injection toy; this repo trains no DP model, so no frozen numbers are quoted.",
+    "description": "How DP-SGD clipping and noise degrade accuracy for minority subgroups, so adding privacy to a bias-mitigation pipeline is not free. Includes a runnable toy.",
     "tags": ["data", "metrics"]
   },
 {
@@ -424,6 +469,7 @@
     "title": "What Is Reject Option Classification?",
     "subtitle": "Flip the model's least-confident predictions toward the group history treated worst.",
     "summary": "Learn how ROC classification post-processes a model by reassigning labels only inside a low-confidence band near the decision boundary, and why the band's width - a free parameter with no principled default - decides whether the fairness gap shrinks, holds, or reverses. Worked on the COMPAS baseline logistic regression: a +-0.10 band flips 651 of 3,254 predictions and halves the gap, while a +-0.15 band overcorrects it to -70 pp and collapses accuracy.",
+    "description": "How reject option classification relabels only low-confidence cases near the boundary, and why the band width decides whether the gap shrinks or reverses.",
     "tags": ["metrics", "detection"]
   },
   {
@@ -431,6 +477,7 @@
     "title": "Algorithmic Recourse",
     "subtitle": "What you can actually change to flip a model's decision.",
     "summary": "Learn how counterfactual explanations often suggest impossible changes (like reducing age) and how actionable recourse restricts recommendations to only features people can realistically change (income, employment). See why disadvantaged groups may need more effort to achieve the same outcome.",
+    "description": "How counterfactual explanations can suggest impossible changes, and how actionable recourse limits advice to changes people can make, with group effort gaps.",
     "tags": ["explainability", "metrics", "detection", "healthcare"]
   },
   {
@@ -443,8 +490,10 @@
   {
     "slug": "distributionally-robust-optimization",
     "title": "Distributionally Robust Optimization (DRO) for Fairness",
+    "seo_title": "Distributionally Robust Optimization for Fairness",
     "subtitle": "Hedge against the worst group instead of constraining one metric.",
     "summary": "Learn how group DRO trains against an adversary that shifts weight onto whichever group the model currently fails, and how it differs from a parity-constrained method like ExponentiatedGradient. See the real worst-group gain on Benefits Denial, the cost to the other groups, and how the step size over-hedges.",
+    "description": "How group DRO trains against the worst-off group, how it differs from a parity constraint, and what it costs the other groups on Benefits Denial.",
     "tags": ["metrics", "data"]
   },
   {
@@ -473,6 +522,363 @@
     "title": "Permutation Tests for Fairness Gaps",
     "subtitle": "Is the gap a finding or a coincidence?",
     "summary": "Learn how shuffling group labels turns a fairness gap into a p-value, and how the same 5-point gap on Benefits Denial is significant in 72% of 1,000-row audits and only 17% of 200-row ones. Includes a hand-written test checked against faircode.significance.",
+    "description": "How shuffling group labels turns a fairness gap into a p-value, and why the same 5-point gap is significant in 72% of 1,000-row audits but 17% of 200-row ones.",
     "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "adversarial-debiasing",
+    "title": "Adversarial Debiasing",
+    "subtitle": "Train a predictor against a second model that tries to read the group from its output.",
+    "summary": "Learn how a predictor and an adversary are trained together so the scores carry no usable group information. See it on Tenant Screening, where raising the adversarial weight cuts the parity gap from +0.1136 to +0.0296 for about one point of accuracy, and why a stronger reader can still find what a weak one cannot.",
+    "tags": ["metrics", "detection"]
+  },
+  {
+    "slug": "fairness-regularization",
+    "title": "Fairness Regularization",
+    "subtitle": "Put a price on the parity gap and read the trade-off off a curve.",
+    "summary": "Learn how a penalty on the group gap is added to the training loss with one weight, and why a smooth gap on probabilities is not the gap on decisions. See the weight scan on Benefits Denial: nothing at small values, a closed gap at a cost of four points of accuracy at large ones.",
+    "tags": ["metrics"]
+  },
+  {
+    "slug": "fair-representation-learning",
+    "title": "Fair Representation Learning",
+    "subtitle": "A representation that hides the group from one reader can still leak to another.",
+    "summary": "Learn how projecting out the directions that predict a protected attribute cleans a representation, and why the claim is only as strong as the reader you tested. See iterative nullspace projection on Benefits Denial: a linear reader drops to chance while a random forest still recovers sex at 0.859 AUC.",
+    "description": "How projecting out directions that predict a protected attribute cleans a representation, and why a random forest can still recover sex at 0.859 AUC.",
+    "tags": ["data", "metrics"]
+  },
+  {
+    "slug": "measurement-bias",
+    "title": "Measurement Bias",
+    "subtitle": "When the feature or label measures one group worse than another.",
+    "summary": "Learn how a feature that is recorded differently for one group creates a gap the true values do not have. See injected mis-measurement on Benefits Denial: crediting women 15% less schooling doubles the parity gap while accuracy goes up, and noise instead of bias shrinks it.",
+    "tags": ["data"]
+  },
+  {
+    "slug": "aggregation-bias",
+    "title": "Aggregation Bias",
+    "subtitle": "One model for everyone assumes one relationship.",
+    "summary": "Learn why a pooled model can fit every group worse than a model fitted to that group alone, and when separate models are not allowed. See COMPAS: separate models lift accuracy by 11 points for White defendants and 5.6 for Black defendants, with a coefficient that flips sign.",
+    "tags": ["data", "metrics"]
+  },
+  {
+    "slug": "survivorship-bias",
+    "title": "Survivorship Bias",
+    "subtitle": "You only see the people who passed an earlier filter.",
+    "summary": "Learn how training on the people who passed a gate shrinks the effect of the feature that made the gate. See AI Fair Recruitment: restricting to candidates with a test score of 70 or more nearly doubles the hire rate and attenuates the score coefficient from 0.97 to 0.83.",
+    "tags": ["data", "detection"]
+  },
+  {
+    "slug": "disaggregated-evaluation",
+    "title": "Disaggregated Evaluation",
+    "subtitle": "One overall number hides who the model fails.",
+    "summary": "Learn how to report every metric per group and per intersection with an interval, and how fast the intervals widen as groups shrink. See Insurance Denial: a 0.644 overall accuracy, and 95% intervals that grow from 0.116 wide overall to 0.333 for the smallest intersection.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "leave-one-group-out-evaluation",
+    "title": "Leave-One-Group-Out Evaluation",
+    "subtitle": "How does the model do on a group it never saw?",
+    "summary": "Learn how holding out one group at a time tests generalization to people the training data left out. See Benefits Denial with a random forest: most held-out groups change by a point or less, one 67-row group loses 4.5, and the test sizes say which of those to trust.",
+    "tags": ["detection", "data"]
+  },
+  {
+    "slug": "choosing-a-fairness-metric",
+    "title": "Choosing a Fairness Metric",
+    "subtitle": "Start from the harm, not from the formula.",
+    "summary": "Learn a decision path from the harm you worry about to the metric that measures it. See the benchmark's own results: in 9 of 13 audit and attribute pairs some fairness metrics are significant and others are not, so the choice changes the verdict.",
+    "tags": ["metrics"]
+  },
+  {
+    "slug": "model-cards",
+    "title": "Model Cards",
+    "subtitle": "A short, standard disclosure of what a model is for and who it fails.",
+    "summary": "Learn what belongs on a model card: intended use, data, per-group performance and known limits. See one generated from the benchmark's results for Benefits Denial, with every number read straight from results/, and what a card cannot promise.",
+    "tags": ["detection", "explainability"]
+  },
+  {
+    "slug": "datasheets-for-datasets",
+    "title": "Datasheets for Datasets",
+    "subtitle": "Ask the questions about a dataset that nobody wrote down.",
+    "summary": "Learn the datasheet questions and how each unanswered one maps to a bias. See a datasheet for the Healthcare Readmission data filled from the file itself: 101,766 rows, 96.9% of weight values missing, and three questions the repo cannot answer.",
+    "tags": ["data"]
+  },
+  {
+    "slug": "algorithmic-impact-assessment",
+    "title": "Algorithmic Impact Assessment",
+    "subtitle": "Who does the decision affect, and how do you know?",
+    "summary": "Learn what an impact assessment asks and how a fairness audit is its measurement step. See the measurement section for Tenant Screening written from results/: four of six metrics significant, and the mitigation options with their gaps.",
+    "tags": ["detection"]
+  },
+  {
+    "slug": "inferring-protected-attributes",
+    "title": "Inferring Protected Attributes",
+    "subtitle": "Measuring a gap when the group is not in the data.",
+    "summary": "Learn how group membership is estimated from other fields and what that does to a measured gap. See Benefits Denial with sex hidden: inferred from 5% labelled rows at 0.823 accuracy, the gap reads -0.092 (hard) or -0.0885 (weighted) against a true -0.1003.",
+    "tags": ["data", "detection"]
+  },
+  {
+    "slug": "fairness-without-demographics",
+    "title": "Fairness Without Demographics",
+    "subtitle": "Help the worst-off group when you do not know who they are.",
+    "summary": "Learn how upweighting the training rows a model gets wrong improves worst-group accuracy without any group labels. See it on Benefits Denial: a 3x upweight lifts the worst group from 0.712 to 0.742, and a 5x upweight collapses the model.",
+    "tags": ["metrics", "data"]
+  },
+  {
+    "slug": "adverse-action-notices",
+    "title": "Adverse Action Notices",
+    "subtitle": "The reasons a lender must give are the one place a model's inputs are forced into the open.",
+    "summary": "Learn what an adverse action notice and its reason codes are, and how to derive them from a model's contributions. See German Credit Lending: the top reason is identical for both age groups, but personal_status appears 15 points more often in the under-30s' top two reasons.",
+    "description": "How reason codes on a credit decline are derived from a model, and how they can expose a proxy: personal_status shows up 15 points more for under-30s.",
+    "tags": ["explainability", "detection"]
+  },
+  {
+    "slug": "geographic-proxies-and-redlining",
+    "title": "Geographic Proxies and Redlining",
+    "subtitle": "Where a person lives is the oldest proxy for who they are.",
+    "summary": "Learn how a location column reconstructs race and how to measure both the proxy and its effect on the gap. See Tenant Screening: the area alone recovers race at 0.719 AUC, yet adding it moves the parity gap from +0.1136 to +0.0812.",
+    "description": "How a location feature can reveal race, and why proxy strength and effect on the parity gap are separate measurements, shown on Tenant Screening.",
+    "tags": ["data", "detection"]
+  },
+  {
+    "slug": "risk-based-pricing-gaps",
+    "title": "Risk-Based Pricing Gaps",
+    "subtitle": "A model can approve everyone and still treat groups differently.",
+    "summary": "Learn how to measure a fairness gap in a continuous quoted amount or rate when no one is declined. See German Credit Lending: models quote 7 to 13 percent less to under-30s, with intervals that still include zero at 200 test rows.",
+    "description": "How to measure a group gap in a quoted amount or price when everyone is approved, with a bootstrap interval, shown on German Credit Lending.",
+    "tags": ["metrics", "detection"]
+  },
+  {
+    "slug": "race-in-clinical-models",
+    "title": "Race in Clinical Models",
+    "subtitle": "Whether a model should see race is a values question with a small statistical effect.",
+    "summary": "Learn how to compare a clinical risk model with and without race on accuracy, calibration by group and who receives a limited resource. See Healthcare Readmission: AUC 0.635 against 0.633, and the same 1.2-point over-prediction for African American patients either way.",
+    "description": "Comparing a hospital readmission model with and without race on accuracy, calibration and who gets a limited place: the effect is small either way.",
+    "tags": ["metrics", "healthcare"]
+  },
+  {
+    "slug": "utilization-as-a-label",
+    "title": "Utilization as a Label",
+    "subtitle": "A label that records who came back records who could come back.",
+    "summary": "Learn the same-burden comparison that exposes an access-driven label. See Healthcare Readmission: readmission is 0.112 for both groups and the burden-adjusted gap is +0.0027, so the Obermeyer mechanism is not visible here.",
+    "description": "How to test whether a utilization label records access, by comparing groups at the same illness burden, shown on Healthcare Readmission.",
+    "tags": ["data", "healthcare"]
+  },
+  {
+    "slug": "discharge-leakage-in-readmission-models",
+    "title": "Discharge Leakage in Readmission Models",
+    "seo_title": "Discharge Leakage in Readmission Models",
+    "subtitle": "Some columns are only known once the outcome is nearly decided.",
+    "summary": "Learn to ask when each column is known and what it does to the rows. See Healthcare Readmission: 2.4% of rows are deaths or hospice discharges, adding the disposition lifts AUC from 0.640 to 0.671, and most of that is not from them.",
+    "description": "How discharge disposition can leak the outcome in a readmission model, and what end-of-life rows do to the base rate, shown on 99,492 patients.",
+    "tags": ["data", "healthcare"]
+  },
+  {
+    "slug": "seed-and-split-sensitivity",
+    "title": "Seed and Split Sensitivity",
+    "subtitle": "Every fairness number here comes from one split. How much of it is the seed?",
+    "summary": "Learn how to rerun a split with many seeds and report the spread of a fairness metric. See German Credit Lending: the gap is -0.0914 for the benchmark seed, averages -0.0637 over 30 seeds with a standard deviation of 0.0498, and is significant in only 13% of splits.",
+    "description": "How much a fairness gap changes with the random split seed: on 1,000 German Credit rows the spread is as large as the effect; on 32,561 rows it is tiny.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "cross-validation-for-fairness",
+    "title": "Cross-Validation for Fairness",
+    "subtitle": "Test every row once, and protect the small cells.",
+    "summary": "Learn how to cross-validate a fairness metric with folds stratified by group and label, and pool the held-out predictions. See German Credit Lending: the pooled gap is about -0.06 against -0.0914 on the benchmark split, and stratified folds never fall below 27 rows in the smallest cell.",
+    "description": "Cross-validating a fairness gap with folds stratified by group and label, so every row is tested once and no fold lacks the small cells.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "stratified-test-sets-for-fairness",
+    "title": "Stratified Test Sets for Fairness",
+    "subtitle": "Build an evaluation set that can measure the small group.",
+    "summary": "Learn to oversample a small group for evaluation and reweight to recover population rates. See German Credit Lending: a half-under-30 test set narrows the under-30 accuracy interval from 0.213 to 0.183, and the unweighted overall accuracy is biased low until reweighted.",
+    "description": "Oversampling a small group in an evaluation set to narrow its interval, and weighting rows back to the population for an overall number.",
+    "tags": ["data", "detection"]
+  },
+  {
+    "slug": "feature-importance-by-group",
+    "title": "Feature Importance by Group",
+    "subtitle": "Does the model lean on different features for different people?",
+    "summary": "Learn how to run permutation importance separately on each group's rows, with the standard deviation over shuffles. See Benefits Denial: shuffling capital gain costs 0.079 accuracy on men and 0.042 on women, and education about a third as much for women.",
+    "description": "Running permutation importance per group to see whether a model relies on different features for different people, shown on Benefits Denial.",
+    "tags": ["explainability", "detection"]
+  },
+  {
+    "slug": "partial-dependence-by-group",
+    "title": "Partial Dependence by Group",
+    "subtitle": "What the model does with a feature, drawn once per group.",
+    "summary": "Learn how to draw a model's average prediction against one feature for each group, and why scikit-learn's default for trees ignores the rows you pass. See Benefits Denial: women's curve sits 0.044 below men's at 6 years of schooling and 0.025 below at 16, with only 17 women at the top.",
+    "description": "Partial dependence drawn per group, with method brute so each curve averages over its own rows, and the row counts behind each point.",
+    "tags": ["explainability", "detection"]
+  },
+  {
+    "slug": "explanation-disagreement",
+    "title": "Explanation Disagreement",
+    "subtitle": "Two explanation methods, one model, different top features.",
+    "summary": "Learn to rank the same model's features with permutation importance, SHAP and logistic coefficients and compare the ranks. See Benefits Denial: capital gain is first by two methods and third by SHAP, relationship (a sex proxy) is first by SHAP only, and agreement is weaker for women.",
+    "description": "Comparing permutation importance, SHAP and logistic coefficients on one model, and why a fairness claim should say which method it rests on.",
+    "tags": ["explainability", "detection"]
+  },
+  {
+    "slug": "hiring-pipeline-adverse-impact",
+    "title": "Hiring Pipeline Adverse Impact",
+    "subtitle": "Adverse impact at each stage, not only the last decision.",
+    "summary": "Learn to compute the four-fifths ratio with a bootstrap interval at each stage of a hiring funnel and for the whole funnel. See AI Fair Recruitment: four score stages are balanced to within 0.4%, and the gap enters at the hiring decision (ratio 0.942, interval 0.927 to 0.958).",
+    "description": "Computing the four-fifths ratio with intervals at each hiring stage and for the whole funnel, shown on AI Fair Recruitment where the gap enters at the decision.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "compounding-disparities",
+    "title": "Compounding Disparities",
+    "subtitle": "Four stages at 0.9 are 0.66 end to end.",
+    "summary": "Learn why a funnel's ratio is the product of its stage ratios, so stages that each pass the four-fifths check can fail it together. A simulation: 0.95 at each of four stages gives 0.813, 0.90 gives 0.666, 0.85 gives 0.521, and correlated stages behave almost the same.",
+    "description": "Why stage ratios multiply: four stages at 0.90 each pass the four-fifths check and give 0.666 end to end, shown in a simulation with correlated stages too.",
+    "tags": ["metrics"]
+  },
+  {
+    "slug": "differential-validity",
+    "title": "Differential Validity",
+    "subtitle": "A score can predict equally well and still be set too high for one group.",
+    "summary": "Learn the difference between validity (how well a score ranks people in each group) and prediction (the expected outcome at the same score). See AI Fair Recruitment: AUC is 0.74 to 0.75 for both genders, but women are hired 0.9 to 4.0 points less often at the same technical score.",
+    "description": "Equal validity does not mean equal prediction: on AI Fair Recruitment each score has the same AUC for women and men, but women are hired less at the same score.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "minimum-detectable-gap",
+    "title": "Minimum Detectable Gap",
+    "subtitle": "A non-significant gap can be a gap the audit could never see.",
+    "summary": "Learn how big a true gap must be for a test of a given size to detect it, and check the formula with the repo's permutation test. See the benchmark's audits: German Credit with groups of 69 and 131 can only detect a 21-point gap, while Benefits Denial by sex can detect 3.7 points.",
+    "description": "How large a fairness gap must be for an audit to detect it at 80% power, checked with the permutation test and applied to the benchmark's groups.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "small-group-shrinkage",
+    "title": "Small-Group Shrinkage",
+    "subtitle": "Estimate a rate for a group too small to measure, and know what it hides.",
+    "summary": "Learn empirical-Bayes shrinkage toward the pooled rate for many small groups. On Healthcare Readmission it cuts the error of small-audit cell accuracies from 0.144 to 0.043, and pulls a cell whose true accuracy is 6.8 points below the pool back to almost exactly the pool.",
+    "description": "Empirical-Bayes shrinkage cuts the error of small-group rates by two thirds on Healthcare Readmission, and can hide a real gap in the smallest cell.",
+    "tags": ["data", "detection"]
+  },
+  {
+    "slug": "confidence-intervals-for-ratios",
+    "title": "Confidence Intervals for Ratios",
+    "subtitle": "A ratio of two noisy rates is skewed, and with a near-zero denominator it cannot be estimated.",
+    "summary": "Learn the percentile bootstrap and the delta-method log-ratio interval for a disparate impact ratio. See COMPAS: a gradient-boosting model selects 1 of 1,444 White defendants, the ratio is 1,252, and the two intervals disagree by orders of magnitude.",
+    "description": "Intervals for a disparate impact ratio by percentile bootstrap and the log-ratio delta method, and why a near-zero denominator has no honest interval.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "monitoring-fairness-in-production",
+    "title": "Monitoring Fairness in Production",
+    "subtitle": "An audit is a photograph. Monitoring is the film.",
+    "summary": "Learn to put a control chart on a group gap, and how batch size and window trade speed against false alarms. A simulation on Benefits Denial: a 0.06 drift alerts after 2 batches of 1,000, a 0.03 drift takes a median of 11 batches of 200, and the 3-sigma rule false-alarms in 2% to 9% of runs.",
+    "description": "Control-charting a fairness gap after deployment: how batch size and window change detection delay and false alarms, simulated on Benefits Denial.",
+    "tags": ["detection", "metrics"]
+  },
+  {
+    "slug": "label-shift-and-fairness",
+    "title": "Label Shift and Fairness",
+    "subtitle": "When the base rate moves, some metrics swing and some stay put.",
+    "summary": "Learn which fairness metrics survive a change in a group's base rate. On Benefits Denial, true and false positive rate gaps stay at +0.0181 and -0.0004 while the parity gap runs from -0.0683 to +0.0326 and the precision gap from -0.4443 to +0.0594.",
+    "description": "Which fairness metrics change under label shift: TPR and FPR gaps stay fixed while parity and precision gaps swing, shown on Benefits Denial.",
+    "tags": ["metrics", "detection"]
+  },
+  {
+    "slug": "delayed-feedback",
+    "title": "Delayed Feedback",
+    "subtitle": "Outcomes that have not happened yet look like outcomes that did not happen.",
+    "summary": "Learn how late-arriving outcomes bias a monitored fairness gap, and why counting only mature cases fixes it. A simulation on Healthcare Readmission: the true gap is zero, but unequal delays make the naive monitor read +0.0081 or -0.0057.",
+    "description": "How late outcomes bias a monitored group gap, and counting only mature cases as the fix, simulated on 99,492 hospital discharges.",
+    "tags": ["data", "detection"]
+  },
+  {
+    "slug": "causal-graphs-for-fairness",
+    "title": "Causal Graphs for Fairness",
+    "subtitle": "Two analysts, same data, opposite verdicts: the difference is a drawing.",
+    "summary": "Learn how common causes, mediators and colliders decide what you may control for. On Benefits Denial the sex coefficient is -0.196 raw, -0.157 adjusting for hours, and -0.034 adjusting for marital status, which removes 83% of the gap if you draw it as a fair mediator.",
+    "description": "How the assumed causal graph decides which variables to adjust for: the same sex gap is -0.196, -0.157 or -0.034 depending on the adjustment set.",
+    "tags": ["detection", "explainability"]
+  },
+  {
+    "slug": "path-specific-effects",
+    "title": "Path-Specific Effects",
+    "subtitle": "Split a gap into the paths you accept and the ones you do not.",
+    "summary": "Learn a linear mediation analysis that splits the effect of an attribute into direct and indirect paths with bootstrap intervals. On Benefits Denial the total effect is -0.1788, through hours -0.0272, through schooling -0.0025, and 83% is direct.",
+    "description": "Splitting the sex gap in income into direct and mediated paths with bootstrap intervals, and what must be assumed for the split to mean anything.",
+    "tags": ["metrics", "explainability"]
+  },
+  {
+    "slug": "randomized-post-processing",
+    "title": "Randomized Post-Processing",
+    "subtitle": "Mix two decisions with a weighted coin to reach equalized odds exactly.",
+    "summary": "Learn the Hardt-Price-Srebro linear programme over score bins. On Tenant Screening it cuts the equalized-odds gap from 0.149 to 0.009 to 0.020 for under a point of accuracy, with 1.2% to 5.9% of rows changing decision between draws.",
+    "description": "The linear programme for randomized equalized-odds post-processing on Tenant Screening: gap 0.149 down to under 0.02, with random decisions in a few rows.",
+    "tags": ["metrics"]
+  },
+  {
+    "slug": "fairness-accuracy-pareto-frontier",
+    "title": "Fairness-Accuracy Pareto Frontier",
+    "subtitle": "The set of choices nothing else beats, and it can be short.",
+    "summary": "Learn to sweep decision rules and keep the non-dominated ones. On Tenant Screening 1,681 threshold pairs give an 8-point frontier that is nearly flat: a gap of 0.0047 costs no accuracy against 0.114 at the default threshold.",
+    "description": "A sweep of 1,681 threshold pairs on Tenant Screening gives a nearly flat frontier, and shows where the benchmark's five strategies sit against it.",
+    "tags": ["metrics", "detection"]
+  },
+  {
+    "slug": "choosing-a-mitigation-strategy",
+    "title": "Choosing a Mitigation Strategy",
+    "subtitle": "What each of the five strategies needs, costs and leaves.",
+    "summary": "Learn to choose among the benchmark's strategies by constraints first. Over 13 audit and attribute pairs, S3 and S4 cut the median parity gap to 0.009 and 0.007 against 0.042 for S2, S3 costs 2.7 points of accuracy, and S4 needs group labels at prediction time.",
+    "description": "Choosing among the five mitigation strategies from the benchmark's results: what each needs, the median accuracy cost and the gap left, over 13 pairs.",
+    "tags": ["metrics"]
+  },
+  {
+    "slug": "auc-gaps-by-group",
+    "title": "What Is an AUC Gap Between Groups?",
+    "subtitle": "Equal ranking quality can hide unequal errors, and a threshold can hide a ranking gap.",
+    "summary": "Learn how to compute a per-group AUC, the gap between groups, and its bootstrap and DeLong intervals. See Tenant Screening, where AUCs of 0.680 and 0.672 sit beside false positive rates of 0.610 and 0.460, Healthcare Readmission, where a real 0.052 gap is invisible at a 0.5 cutoff, and Insurance Denial, where a 0.095 gap is noise.",
+    "description": "Per-group AUC and its gap with bootstrap and DeLong intervals: when equal AUC hides unequal errors, and when a threshold hides a real ranking gap.",
+    "tags": ["metrics", "detection"]
+  },
+  {
+    "slug": "decision-curve-analysis-by-group",
+    "title": "What Is Decision Curve Analysis by Group?",
+    "subtitle": "The thresholds at which a model helps one group can be the ones where it fails another.",
+    "summary": "Learn how net benefit compares a model with treating everyone or no one at each threshold, drawn per group. On COMPAS the model beats both defaults for the advantaged group from 0.18 to 0.37 and for the disadvantaged group from 0.32 to 0.52, so no single cutoff serves both.",
+    "description": "Net benefit by group against treating everyone or no one: how to read a decision curve per group and see where a model helps one group and not another.",
+    "tags": ["metrics", "detection"]
+  },
+  {
+    "slug": "cost-sensitive-evaluation",
+    "title": "How Does Unequal Cost Change a Fairness Evaluation?",
+    "subtitle": "A false positive and a false negative rarely cost the same, and can cost differently by group.",
+    "summary": "Learn how to score each group by expected cost, find the cost-optimal cutoff, and compare it with Elkan's formula and with group-specific thresholds. On Tenant Screening, a 5:1 cost ratio moves the best cutoff from 0.5 to about 0.84, and the model then costs no less than flagging nobody.",
+    "description": "Per-group expected cost under unequal false positive and false negative costs, the cost-optimal threshold, and how it relates to group-specific thresholds.",
+    "tags": ["metrics"]
+  },
+  {
+    "slug": "popularity-bias",
+    "title": "What Is Popularity Bias?",
+    "subtitle": "Items that were shown get the clicks that keep them shown; the rest never get a chance.",
+    "summary": "Learn how a ranking that learns from clicks freezes who is shown. On AI Fair Recruitment only 1,000 of 23,062 candidates are ever shown, 5,389 hired candidates are never seen, and rank correlation of exposure with merit falls from 1.000 to 0.500 as popularity gains weight, while the Gini of exposure stays at 0.961 and misses it.",
+    "description": "A simulated popularity feedback loop on a real audit: the shown set freezes, merit stops ordering exposure, and a group imbalance is locked in.",
+    "tags": ["metrics", "data"]
+  },
+  {
+    "slug": "two-sided-fairness",
+    "title": "What Is Two-Sided Fairness in a Marketplace?",
+    "subtitle": "Fair to the people ranked and good for the people searching: when the two conflict.",
+    "summary": "Learn how to put exposure for the ranked side and nDCG for the searching side on one re-ranking sweep. On AI Fair Recruitment a shift of 0.05 lifts women from 7.0% to 36.1% of the top 1,000 while nDCG@1000 rises from 0.562 to 0.572, and only past it do the sides conflict.",
+    "description": "Exposure for the ranked side and nDCG for the searcher on one re-ranking sweep, and where fairness to one side starts to cost the other.",
+    "tags": ["metrics"]
+  },
+  {
+    "slug": "position-bias-and-click-models",
+    "title": "How Does Position Bias Distort What a Ranking Learns?",
+    "subtitle": "Clicks near the top say where an item was, not how good it was.",
+    "summary": "Learn how a position-based click model and inverse propensity weighting separate position from relevance. On AI Fair Recruitment a ranker trained on raw clicks puts 0.884 of its weight on Age and reaches an AUC of 0.681, weighting recovers 0.745 against an oracle's 0.749, and a wrong exposure curve makes it worse than no correction.",
+    "description": "Simulated clicks from a known relevance: why a ranker trained on raw clicks learns position, how inverse propensity weighting fixes it, and its limits.",
+    "tags": ["metrics", "detection"]
   }
 ]

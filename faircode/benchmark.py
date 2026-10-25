@@ -29,7 +29,14 @@ History" in README.md before regenerating results/ for a citation.
 
 from __future__ import annotations
 
+import difflib
+import hashlib
 import itertools
+import json
+import platform
+import subprocess
+from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 
 import numpy as np
@@ -112,15 +119,47 @@ def _run_strategy(strategy, model_name, manifest, X_all, y, protected_masks, idx
     return y_test, y_pred, y_proba
 
 
-def run_audit(manifest, n_resamples=2000, n_permutations=2000, random_state=None):
-    """Run the full strategy x model x metric grid for one manifest.
+@dataclass
+class AuditData:
+    """One audit prepared exactly the way `run_audit` prepares it (#1078).
 
-    Returns (fairness_rows, performance_rows). fairness_rows has one dict per
-    (strategy, model, protected attribute, metric), plus one per (strategy,
-    model, attribute pair) for the intersectional gap when two or more
-    protected attributes are declared. performance_rows has one dict per
-    (strategy, model, performance metric).
+    `X_all` holds every encoded column (core, proxy and protected); `X` is the
+    subset a strategy trains on (see `faircode.strategies.strategy_features`).
+    `masks` maps each protected attribute name to a 0/1 Series that is 1 for the
+    disadvantaged group, aligned with `X_all` and `y`. `idx_train`/`idx_test` are
+    the manifest's stratified split, so a row computed from them matches `results/`. `df` holds the filtered
+    raw rows (same order as `X_all`), for columns the harness does not encode.
     """
+    manifest: object
+    X_all: pd.DataFrame
+    X: pd.DataFrame
+    y: pd.Series
+    masks: dict
+    idx_train: np.ndarray
+    idx_test: np.ndarray
+    random_state: int
+    df: pd.DataFrame | None = None   # the filtered raw rows, for columns the harness does not encode
+
+    def group(self, name) -> np.ndarray:
+        """The mask of protected attribute `name` as a plain 0/1 integer array (1 = the disadvantaged group), aligned with
+        `X_all` and `y`. `masks` holds boolean Series; this avoids `.to_numpy().astype(int)` at every use (#1133)."""
+        if name not in self.masks:
+            raise KeyError(f"no protected attribute {name!r}; this audit has {sorted(self.masks)}")
+        return self.masks[name].to_numpy().astype(int)
+
+    def train_group(self, name) -> np.ndarray:
+        """`group(name)` for the manifest's training rows (`idx_train`)."""
+        return self.group(name)[self.idx_train]
+
+    def test_group(self, name) -> np.ndarray:
+        """`group(name)` for the manifest's test rows (`idx_test`)."""
+        return self.group(name)[self.idx_test]
+
+
+def prepare_audit(manifest, strategy=None, random_state=None) -> AuditData:
+    """Load, encode and split one manifest. `run_audit` and `load_audit` both call this,
+    so the two cannot drift apart. `strategy` picks the columns of `X`; None keeps the
+    S2 feature set (core features only: no protected columns, no proxies)."""
     rs = manifest.random_state if random_state is None else random_state
     df, y, protected_masks = _load_dataset(manifest)
 
@@ -132,6 +171,55 @@ def run_audit(manifest, n_resamples=2000, n_permutations=2000, random_state=None
         np.arange(len(df)), test_size=manifest.test_size, random_state=rs,
         stratify=y if y.nunique() > 1 else None,
     )
+    feature_cols = strategy_features(
+        strategy or "unawareness_proxy_removal", manifest.core_features, manifest.proxy_features, protected_cols)
+    return AuditData(manifest, X_all, X_all[feature_cols], y, protected_masks, idx_train, idx_test, rs, df)
+
+
+def load_audit(folder, strategy=None, random_state=None) -> AuditData:
+    """Public helper for explainers, notebooks and tests: load the audit in `folder`
+    (a directory holding `audit.yaml`, or the manifest path itself) with the same
+    loader, encoding, feature selection and split the benchmark harness uses.
+
+        data = load_audit("Benefits Denial")
+        model = build_model("logistic_regression", data.random_state)
+        model.fit(data.X.iloc[data.idx_train], data.y.iloc[data.idx_train])
+    """
+    path = Path(folder)
+    is_manifest = path.is_file() or path.suffix.lower() in {".yaml", ".yml"}
+    manifest_path = path if is_manifest else path / "audit.yaml"
+    try:
+        manifest = load_manifest(manifest_path)
+    except FileNotFoundError as error:
+        audit_folder = path.parent if is_manifest else path
+        message = (
+            f"Could not find audit manifest at {manifest_path}. "
+            "`folder` must be an audit folder or a manifest path."
+        )
+        if not audit_folder.exists():
+            manifests = discover_manifests(audit_folder.parent)
+            audit_folders = [manifest.parent.name for manifest in manifests]
+            if audit_folders:
+                message += f" Audit folders next to it: {', '.join(audit_folders)}."
+                matches = difflib.get_close_matches(audit_folder.name, audit_folders, n=1)
+                if matches:
+                    message += f" Did you mean {matches[0]!r}?"
+        raise FileNotFoundError(message) from error
+    return prepare_audit(manifest, strategy, random_state)
+
+
+def run_audit(manifest, n_resamples=2000, n_permutations=2000, random_state=None):
+    """Run the full strategy x model x metric grid for one manifest.
+
+    Returns (fairness_rows, performance_rows). fairness_rows has one dict per
+    (strategy, model, protected attribute, metric), plus one per (strategy,
+    model, attribute pair) for the intersectional gap when two or more
+    protected attributes are declared. performance_rows has one dict per
+    (strategy, model, performance metric).
+    """
+    data = prepare_audit(manifest, random_state=random_state)
+    rs, X_all, y, protected_masks = data.random_state, data.X_all, data.y, data.masks
+    idx_train, idx_test = data.idx_train, data.idx_test
 
     fairness_rows = []
     performance_rows = []
@@ -225,10 +313,148 @@ def summarize(fairness_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+PROVENANCE_FILE = "PROVENANCE.json"
+PROVENANCE_LIBRARIES = ("numpy", "pandas", "scikit-learn", "scipy", "fairlearn", "matplotlib", "PyYAML")
+RESULT_FILES = ("results_fairness.csv", "results_performance.csv", "summary.csv")
+
+
+def _sha256(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def collect_provenance(audits, n_resamples, n_permutations, description="full run") -> dict:
+    """What produced a set of result files (#1129): the commit and whether the tree was dirty, the Python and library
+    versions, the hash of requirements-lock.txt, the resample and permutation counts and the audits included."""
+    repo = Path(__file__).resolve().parent.parent
+
+    def git(*args):
+        try:
+            return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    versions = {}
+    for name in PROVENANCE_LIBRARIES:
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            versions[name] = None
+    lock = repo / "requirements-lock.txt"
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "description": description,
+        "commit": git("rev-parse", "HEAD"),
+        "dirty": None if status is None else bool(status),
+        "python": platform.python_version(),
+        "libraries": versions,
+        "lockfile_sha256": _sha256(lock) if lock.is_file() else None,
+        "n_resamples": n_resamples,
+        "n_permutations": n_permutations,
+        "audits": sorted(audits),
+    }
+
+
+def write_provenance(out_dir, runs) -> Path:
+    """Writes PROVENANCE.json next to the result CSVs: one entry per run that contributed rows, plus the SHA-256 of
+    each result file, so a file edited by hand (or a stale record) is detectable."""
+    out_dir = Path(out_dir)
+    record = {
+        "schema": 1,
+        "files": {name: _sha256(out_dir / name) for name in RESULT_FILES if (out_dir / name).is_file()},
+        "runs": list(runs),
+    }
+    path = out_dir / PROVENANCE_FILE
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _validate_existing_result_outputs(out_dir, requested_audits, provenance) -> None:
+    """Validate existing results before report writes to prevent partial replacement."""
+    out_dir = Path(out_dir)
+    paths = {name: out_dir / name for name in RESULT_FILES}
+    provenance_path = out_dir / PROVENANCE_FILE
+    if not any(path.exists() for path in paths.values()) and not provenance_path.exists():
+        return
+
+    missing = [name for name in RESULT_FILES if not paths[name].exists()]
+    if missing:
+        raise ValueError(
+            "existing benchmark output is incomplete (missing " + ", ".join(missing)
+            + "); refusing to overwrite it. Restore the files or choose a new --out directory."
+        )
+
+    audit_sets = {}
+    for name, path in paths.items():
+        try:
+            table = pd.read_csv(path)
+        except (OSError, UnicodeError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+            raise ValueError(
+                f"existing benchmark output is malformed ({name}: {exc}); refusing to overwrite it. "
+                "Restore the file or choose a new --out directory."
+            ) from exc
+        if table.empty or "audit" not in table or table["audit"].isna().any():
+            raise ValueError(
+                f"existing benchmark output is malformed ({name} has no usable audit rows); "
+                "refusing to overwrite it. Restore the file or choose a new --out directory."
+            )
+        audit_sets[name] = set(table["audit"].astype(str))
+
+    existing_audits = audit_sets[RESULT_FILES[0]]
+    if any(audits != existing_audits for audits in audit_sets.values()):
+        raise ValueError(
+            "existing benchmark result files contain different audit sets; refusing to overwrite them. "
+            "Restore a consistent result set or choose a new --out directory."
+        )
+
+    if provenance_path.exists():
+        try:
+            record = json.loads(provenance_path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("provenance is not a JSON object")
+            if record.get("schema") != 1 or not isinstance(record.get("files"), dict):
+                raise ValueError("unsupported or incomplete provenance record")
+            if not isinstance(record.get("runs"), list):
+                raise ValueError("missing run records")
+            for name, path in paths.items():
+                if record["files"].get(name) != _sha256(path):
+                    raise ValueError(f"{name} does not match its recorded hash")
+            recorded_audits = set()
+            for run in record["runs"]:
+                if not isinstance(run, dict) or not isinstance(run.get("audits"), list):
+                    raise ValueError("malformed run audit list")
+                recorded_audits.update(run["audits"])
+            if recorded_audits != existing_audits:
+                raise ValueError("recorded audits do not match the result files")
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            raise ValueError(
+                f"existing benchmark provenance is malformed or inconsistent ({exc}); "
+                "refusing to overwrite it. Restore the files or choose a new --out directory."
+            ) from exc
+        if provenance is None:
+            raise ValueError(
+                "existing benchmark output has provenance but this report does not; "
+                "refusing to leave stale provenance. Supply provenance or choose a new --out directory."
+            )
+
+    other_audits = existing_audits - requested_audits
+    if other_audits:
+        names = ", ".join(sorted(other_audits))
+        raise ValueError(
+            f"existing benchmark output contains results for other audits ({names}); "
+            "refusing to overwrite them. Run all audits or choose a new --out directory."
+        )
+
+
 def write_report(fairness_df: pd.DataFrame, performance_df: pd.DataFrame, out_dir,
-                 make_plots: bool = True, plot_metric: str = "demographic_parity_diff"):
+                 make_plots: bool = True, plot_metric: str = "demographic_parity_diff", provenance=None):
     """Write results_fairness.csv, results_performance.csv, and a summary.csv
-    to out_dir, plus (if make_plots) render figures/*.png via faircode.figures."""
+    to out_dir, plus (if make_plots) render figures/*.png via faircode.figures.
+    With `provenance` (a dict from collect_provenance) also write PROVENANCE.json (#1129)."""
+    fairness_audits = set(fairness_df["audit"].astype(str)) if "audit" in fairness_df else set()
+    performance_audits = set(performance_df["audit"].astype(str)) if "audit" in performance_df else set()
+    if fairness_audits != performance_audits:
+        raise ValueError("benchmark result tables contain different audit sets; refusing to write output")
+    _validate_existing_result_outputs(out_dir, fairness_audits, provenance)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     fairness_df.to_csv(out_dir / "results_fairness.csv", index=False)
@@ -237,4 +463,6 @@ def write_report(fairness_df: pd.DataFrame, performance_df: pd.DataFrame, out_di
     if make_plots and not fairness_df.empty:
         from .figures import generate_figures
         generate_figures(out_dir, metric=plot_metric)
+    if provenance is not None:
+        write_provenance(out_dir, [provenance])
     return out_dir

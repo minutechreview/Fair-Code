@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>What Is Simpson&#x27;s Paradox in Fairness Audits? · Fair Code</title>
-<meta name="description" content="Learn why an aggregate fairness metric is a weighted average of within-stratum rates, so pooling groups of different sizes can manufacture or flip a disparity. Uses the Benefits Denial (Adult Census) audit: the aggregate sex income gap of +19.6 pp collapses to roughly +3 pp within marital-status strata and reverses to -0.9 pp inside the largest one.">
+<meta name="description" content="Why an aggregate fairness metric is a weighted average of within-group rates, so pooling can create or flip a disparity, shown on Benefits Denial.">
 <link rel="canonical" href="https://www.thefaircode.xyz/explainers/simpsons-paradox.html">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
 <meta property="og:title" content="What Is Simpson&#x27;s Paradox in Fairness Audits? · Fair Code">
-<meta property="og:description" content="Learn why an aggregate fairness metric is a weighted average of within-stratum rates, so pooling groups of different sizes can manufacture or flip a disparity. Uses the Benefits Denial (Adult Census) audit: the aggregate sex income gap of +19.6 pp collapses to roughly +3 pp within marital-status strata and reverses to -0.9 pp inside the largest one.">
+<meta property="og:description" content="Why an aggregate fairness metric is a weighted average of within-group rates, so pooling can create or flip a disparity, shown on Benefits Denial.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://www.thefaircode.xyz/explainers/simpsons-paradox.html">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og/simpsons-paradox.png">
@@ -26,7 +26,7 @@
 <meta property="og:image:alt" content="What Is Simpson&#x27;s Paradox in Fairness Audits? · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="What Is Simpson&#x27;s Paradox in Fairness Audits? · Fair Code">
-<meta name="twitter:description" content="Learn why an aggregate fairness metric is a weighted average of within-stratum rates, so pooling groups of different sizes can manufacture or flip a disparity. Uses the Benefits Denial (Adult Census) audit: the aggregate sex income gap of +19.6 pp collapses to roughly +3 pp within marital-status strata and reverses to -0.9 pp inside the largest one.">
+<meta name="twitter:description" content="Why an aggregate fairness metric is a weighted average of within-group rates, so pooling can create or flip a disparity, shown on Benefits Denial.">
 <meta name="twitter:image" content="https://www.thefaircode.xyz/assets/og/simpsons-paradox.png">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-09-09",
-      "dateModified": "2026-09-14"
+      "dateModified": "2026-10-23"
     },
     {
       "@type": "FAQPage",
@@ -347,7 +347,7 @@ def print_simpsons_report(result: dict) -&gt; None:
 <h4 id="4-continuous-confounders-need-binning-and-the-bins-matter">4. Continuous confounders need binning, and the bins matter</h4>
 <p>The example used a categorical stratifier. For a continuous confounder (age, income, tenure) you have to choose bin edges, and coarse or misaligned bins can hide a reversal that finer bins would show, or manufacture one. Report the binning alongside the result.</p>
 <h3 id="related-concepts">Related Concepts</h3>
-<ul><li><a href="intersectional-bias.html">What Is Intersectional Bias?</a> - the opposite failure: a compounding gap visible only at the intersection of two attributes, hidden when each is checked alone.</li><li><a href="conditional-demographic-parity.html">What Is Conditional Demographic Parity?</a> - the fairness metric built specifically around checking parity <em>within</em> strata of a chosen legitimate factor.</li><li><a href="confounding-variable.html">What Is a Confounding Variable?</a> - the underlying causal structure that makes Simpson&#x27;s reversals possible.</li><li><a href="base-rate-fallacy.html">What Is the Base Rate Fallacy?</a> - a related error about ignoring prior probabilities when reading a conditional rate.</li><li><a href="proxy-variables.html">What Is a Proxy Variable?</a> - why conditioning on the wrong variable can hide real discrimination instead of explaining it.</li></ul>
+<ul><li><a href="intersectional-bias.html">What Is Intersectional Bias?</a> - the opposite failure: a compounding gap visible only at the intersection of two attributes, hidden when each is checked alone.</li><li><a href="conditional-demographic-parity.html">What Is Conditional Demographic Parity?</a> - the fairness metric built specifically around checking parity <em>within</em> strata of a chosen legitimate factor.</li><li><a href="confounding-variable.html">What Is a Confounding Variable?</a> - the underlying causal structure that makes Simpson&#x27;s reversals possible.</li><li><a href="base-rate-fallacy.html">What Is the Base Rate Fallacy?</a> - a related error about ignoring prior probabilities when reading a conditional rate.</li><li><a href="proxy-variables.html">What Is a Proxy Variable?</a> - why conditioning on the wrong variable can hide real discrimination instead of explaining it.</li><li><a href="aggregation-bias.html">Aggregation Bias</a> - when one pooled model fits no group well, the model-level version of the same reversal</li></ul>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../index.html#project-benefits"><code>Benefits Denial/</code></a> - the Adult Census Income audit used above; the aggregate <code>sex</code> income gap is roughly five times any within-marital-status gap and reverses inside the largest stratum.</li><li><a href="../index.html#project-readmission"><code>Healthcare Readmission/</code></a> - a multi-hospital readmission audit where per-facility case mix is a natural stratifier for an aggregate readmission-rate gap.</li></ul>
 <h3 id="further-reading">Further Reading</h3>

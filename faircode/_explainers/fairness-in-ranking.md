@@ -45,7 +45,7 @@ For scale, the benchmark's classification rows for the same audit in `results/` 
 
 ## Detection/Implementation Code
 
-Run from the repo root (`PYTHONPATH=. python3 ranking.py`). The code ranks by score, applies the log discount, and reports exposure ratios with and without a cutoff.
+Run from the repo root (`PYTHONPATH=. python3 explainers/code/fairness-in-ranking.py`; that file is generated from the block below). The code ranks by score, applies the log discount, and reports exposure ratios with and without a cutoff.
 
 ```python
 import numpy as np
@@ -109,6 +109,8 @@ report(scores(X_fair), "mitigated (Gender removed)")
 * [Subgroup Fairness](subgroup-fairness.md) - exposure can differ for intersections the aggregate hides
 * [Label Bias](label-bias.md) - when the relevance label is itself biased
 * [Feedback Loop Bias](feedback-loop-bias.md) - ranked results shape the clicks that retrain the ranker
+* [What Is Popularity Bias?](popularity-bias.md) - exposure that compounds when a ranker learns from its own clicks
+* [What Is Two-Sided Fairness in a Marketplace?](two-sided-fairness.md) - exposure for the ranked and utility for the searcher on one sweep
 
 ## Related Projects in This Repo
 

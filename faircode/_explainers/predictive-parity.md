@@ -30,65 +30,6 @@ Predictive Parity holds when:  PPV(group a) ≈ PPV(group b)
 
 Chouldechova (2017) proved the mechanism algebraically: if predictive parity holds but the base rate of the outcome differs between two groups, the false positive rate and false negative rate cannot be equal across those same groups. It is not a modeling flaw. It is an identity that follows directly from the definitions once base rates diverge.
 
-## Detection Code
-
-Compute Positive Predictive Value per group, then pair it with a base-rate check, since a small PPV gap next to a large base-rate gap is the signature Chouldechova identified.
-
-```python
-import pandas as pd
-
-
-def predictive_parity_gap(df: pd.DataFrame, y_true: str, y_pred: str, group_col: str):
-    """
-    Computes Positive Predictive Value (PPV) per group and the resulting
-    predictive-parity gap.
-
-    Parameters:
-        df: dataframe containing predictions and outcomes
-        y_true: column name of the ground-truth binary label
-        y_pred: column name of the model's binary prediction
-        group_col: column name of the protected attribute
-
-    Returns:
-        (dict of PPV by group, float gap between the max and min PPV)
-    """
-    ppv_by_group = {}
-    for group, sub in df.groupby(group_col):
-        predicted_positive = sub[sub[y_pred] == 1]
-        if len(predicted_positive) == 0:
-            ppv_by_group[group] = float("nan")
-            continue
-        true_positives = (predicted_positive[y_true] == 1).sum()
-        ppv_by_group[group] = true_positives / len(predicted_positive)
-
-    gap = max(ppv_by_group.values()) - min(ppv_by_group.values())
-
-    print("PPV by group:")
-    for g, v in ppv_by_group.items():
-        print(f"  {g}: {v:.2%}")
-    print(f"Predictive Parity Gap: {gap:.2%}")
-
-    return ppv_by_group, gap
-
-
-def base_rate_gap(df: pd.DataFrame, y_true: str, group_col: str):
-    """
-    Computes the true prevalence of the positive outcome per group.
-    A large gap here next to a small PPV gap indicates the Chouldechova
-    trade-off is active: predictive parity is being bought at the cost
-    of unequal error rates.
-    """
-    rates = df.groupby(group_col)[y_true].mean()
-    print("Base rate (true prevalence) by group:")
-    print(rates)
-    return rates.max() - rates.min()
-
-
-# Usage example
-# predictive_parity_gap(compas_df, y_true="two_year_recid", y_pred="flagged_high_risk", group_col="race")
-# base_rate_gap(compas_df, y_true="two_year_recid", group_col="race")
-```
-
 ## Concrete Example: COMPAS - Audit 01
 
 The [COMPAS](../COMPAS/) audit in this repo uses the same ProPublica recidivism dataset at the center of the 2016 "Machine Bias" investigation, where race is the protected attribute - but this repo's `COMPAS/compas-scores-raw.csv` has no independent two-year re-offense outcome to check predictive parity against (per `COMPAS/audit.yaml`, its target is `ScoreText`, COMPAS's own risk label). The real-world 2016 controversy - which *is* about actual two-year re-offense, from ProPublica's own separate analysis file - unfolded exactly as follows:
@@ -142,6 +83,72 @@ Predictive Parity Gap: 5.68%
 ```
 
 A real, if modest, predictive-parity gap - a "good credit" flag is a little more trustworthy for older applicants than younger ones. The COMPAS case above is the more dramatic historical illustration of the same trade-off (PPV close, FPR far apart), just not one this repo's own file can recompute end to end.
+
+## Detection Code
+
+Compute Positive Predictive Value per group, then pair it with a base-rate check, since a small PPV gap next to a large base-rate gap is the signature Chouldechova identified.
+
+```python
+# runnable
+import pandas as pd
+
+
+def predictive_parity_gap(df: pd.DataFrame, y_true: str, y_pred: str, group_col: str):
+    """
+    Computes Positive Predictive Value (PPV) per group and the resulting
+    predictive-parity gap.
+
+    Parameters:
+        df: dataframe containing predictions and outcomes
+        y_true: column name of the ground-truth binary label
+        y_pred: column name of the model's binary prediction
+        group_col: column name of the protected attribute
+
+    Returns:
+        (dict of PPV by group, float gap between the max and min PPV)
+    """
+    ppv_by_group = {}
+    for group, sub in df.groupby(group_col):
+        predicted_positive = sub[sub[y_pred] == 1]
+        if len(predicted_positive) == 0:
+            ppv_by_group[group] = float("nan")
+            continue
+        true_positives = (predicted_positive[y_true] == 1).sum()
+        ppv_by_group[group] = true_positives / len(predicted_positive)
+
+    gap = max(ppv_by_group.values()) - min(ppv_by_group.values())
+
+    print("PPV by group:")
+    for g, v in ppv_by_group.items():
+        print(f"  {g}: {v:.2%}")
+    print(f"Predictive Parity Gap: {gap:.2%}")
+
+    return ppv_by_group, gap
+
+
+def base_rate_gap(df: pd.DataFrame, y_true: str, group_col: str):
+    """
+    Computes the true prevalence of the positive outcome per group.
+    A large gap here next to a small PPV gap indicates the Chouldechova
+    trade-off is active: predictive parity is being bought at the cost
+    of unequal error rates.
+    """
+    rates = df.groupby(group_col)[y_true].mean()
+    print("Base rate (true prevalence) by group:")
+    print(rates)
+    return rates.max() - rates.min()
+
+
+sample = pd.DataFrame(
+    {
+        "group": ["A", "A", "B", "B"],
+        "y_true": [1, 0, 1, 0],
+        "y_pred": [1, 1, 1, 0],
+    }
+)
+predictive_parity_gap(sample, y_true="y_true", y_pred="y_pred", group_col="group")
+base_rate_gap(sample, y_true="y_true", group_col="group")
+```
 
 ## Limitations and Trade-offs
 

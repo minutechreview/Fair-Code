@@ -8,23 +8,41 @@ and prints the per-row change, so nobody has to diff two CSVs by hand:
     python3 scripts/diff_results.py                       # fairness + performance, moved rows only
     python3 scripts/diff_results.py --threshold 0.02      # flag rows that moved by more than 0.02
     python3 scripts/diff_results.py --kind fairness --all # every row, not just the ones that moved
+    python3 scripts/diff_results.py --limit 100           # list at most 100 rows per kind
     python3 scripts/diff_results.py --json                # machine-readable
     python3 scripts/diff_results.py --fail-on-change      # exit 1 if any row is flagged (for CI)
+    python3 scripts/diff_results.py --audit COMPAS        # only these audits (repeatable)
+    python3 scripts/diff_results.py --summary             # one line per audit and kind
+
+Each row also carries a `sample` field: `same` when both sides report the same group sizes
+(fairness: n_disadvantaged and n_advantaged; performance: n), `different` when they differ (the two
+runs were scored on different test rows, so the delta mixes a model change with a change in who was
+tested; the sizes are in `sample_sizes`), and `unknown` when a side has no size columns or the row is
+on one side only. `different` rows are marked `~` in the text output and counted in `--summary`.
 
 Join keys: fairness = audit, strategy, model, protected_attribute, metric; performance = audit,
 strategy, model, metric. A row present on one side only is reported as `only_current` or
 `only_reference` (a new audit, strategy or metric, or one that was dropped) and always counts as
 flagged. A row on both sides is `moved` when |current - reference| > --threshold (default 0.01),
 else `unchanged`. A value that is empty on one side only (e.g. an AUC row's missing interval)
-counts as moved. Reads only; it never writes to either directory.
+counts as moved.
+
+A row whose value is empty on one side while that side's `note` column explains why (for example
+`advantaged_selection_too_rare`, the disparate impact ratio withheld when the advantaged group is almost
+never selected, #1132) is `withheld`, not `moved`: the benchmark chose not to report a number. It is
+listed in its own block with both sides' notes, counted separately in `--summary`, and counts as
+flagged for `--fail-on-change` because what the harness reports changed. A row withheld on both sides
+is `unchanged`. Reads only; it never writes to either directory.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
+import difflib
 
 import pandas as pd
 
@@ -33,34 +51,68 @@ CURRENT_DIR = REPO_ROOT / "results"
 REFERENCE_DIR = REPO_ROOT / "paper" / "results-frozen"
 DEFAULT_THRESHOLD = 0.01
 
+SIZE_COLUMNS = {
+    "fairness": ["n_disadvantaged", "n_advantaged"],
+    "performance": ["n"],
+}
+
 KINDS = {
     "fairness": ("results_fairness.csv", ["audit", "strategy", "model", "protected_attribute", "metric"]),
     "performance": ("results_performance.csv", ["audit", "strategy", "model", "metric"]),
 }
 
 
-def diff_table(current: pd.DataFrame, reference: pd.DataFrame, keys: list[str],
-               threshold: float = DEFAULT_THRESHOLD) -> list[dict]:
-    """One dict per row on either side: the key columns plus status, reference, current, delta."""
-    def index(df):
-        out = {}
-        for _, row in df.iterrows():
-            out[tuple(str(row[k]) for k in keys)] = row["value"]
-        return out
+def _sizes(row, size_columns):
+    """The row's group sizes as a list of ints, or None if a size column is missing or empty."""
+    values = []
+    for column in size_columns:
+        if column not in row.index or pd.isna(row[column]):
+            return None
+        values.append(int(row[column]))
+    return values
 
-    cur, ref = index(current), index(reference)
+
+def diff_table(current: pd.DataFrame, reference: pd.DataFrame, keys: list[str],
+               threshold: float = DEFAULT_THRESHOLD, size_columns: list[str] | None = None) -> list[dict]:
+    """One dict per row on either side: the key columns plus status, reference, current, delta, sample.
+
+    `size_columns` names the columns holding the test-set sizes; when both sides have them for a row,
+    `sample` is `same` or `different` (with `sample_sizes` giving both), otherwise `unknown`.
+    """
+    def index(df):
+        out, sizes, notes = {}, {}, {}
+        for _, row in df.iterrows():
+            key = tuple(str(row[k]) for k in keys)
+            out[key] = row["value"]
+            sizes[key] = _sizes(row, size_columns or [])
+            note = row["note"] if "note" in row.index else None
+            notes[key] = None if note is None or pd.isna(note) or not str(note).strip() else str(note)
+        return out, sizes, notes
+
+    (cur, cur_sizes, cur_notes), (ref, ref_sizes, ref_notes) = index(current), index(reference)
     rows = []
     for key in sorted(set(cur) | set(ref)):
         entry = dict(zip(keys, key))
         c, r = cur.get(key), ref.get(key)
         entry["reference"] = None if r is None or pd.isna(r) else float(r)
         entry["current"] = None if c is None or pd.isna(c) else float(c)
+        c_size, r_size = cur_sizes.get(key), ref_sizes.get(key)
+        if key not in cur or key not in ref or c_size is None or r_size is None:
+            entry["sample"] = "unknown"
+        else:
+            entry["sample"] = "same" if c_size == r_size else "different"
+            if c_size != r_size:
+                entry["sample_sizes"] = {"current": c_size, "reference": r_size}
         if key not in ref:
             entry["status"], entry["delta"] = "only_current", None
         elif key not in cur:
             entry["status"], entry["delta"] = "only_reference", None
         elif entry["current"] is None and entry["reference"] is None:
             entry["status"], entry["delta"] = "unchanged", 0.0
+        elif (entry["current"] is None and cur_notes.get(key)) or (entry["reference"] is None and ref_notes.get(key)):
+            entry["status"], entry["delta"] = "withheld", None
+            entry["withheld"] = {"current": cur_notes.get(key) if entry["current"] is None else None,
+                                 "reference": ref_notes.get(key) if entry["reference"] is None else None}
         elif entry["current"] is None or entry["reference"] is None:
             entry["status"], entry["delta"] = "moved", None
         else:
@@ -72,7 +124,8 @@ def diff_table(current: pd.DataFrame, reference: pd.DataFrame, keys: list[str],
 
 
 def diff_dirs(current_dir: Path, reference_dir: Path, kinds=("fairness", "performance"),
-              threshold: float = DEFAULT_THRESHOLD) -> dict:
+              threshold: float = DEFAULT_THRESHOLD, audits=None) -> dict:
+    """With `audits`, only rows whose audit is one of those names are joined."""
     out = {}
     for kind in kinds:
         filename, keys = KINDS[kind]
@@ -80,23 +133,131 @@ def diff_dirs(current_dir: Path, reference_dir: Path, kinds=("fairness", "perfor
         for p in (cur_path, ref_path):
             if not p.is_file():
                 raise FileNotFoundError(f"{p} not found")
-        out[kind] = diff_table(pd.read_csv(cur_path), pd.read_csv(ref_path), keys, threshold)
+        current, reference = pd.read_csv(cur_path), pd.read_csv(ref_path)
+        if audits:
+            wanted = set(audits)
+            current = current[current["audit"].astype(str).isin(wanted)]
+            reference = reference[reference["audit"].astype(str).isin(wanted)]
+        out[kind] = diff_table(current, reference, keys, threshold, SIZE_COLUMNS[kind])
     return out
+
+
+def known_audits(current_dir: Path, reference_dir: Path, kinds=("fairness", "performance")) -> set[str]:
+    """Every audit name on either side, for checking --audit."""
+    names = set()
+    for kind in kinds:
+        filename = KINDS[kind][0]
+        for directory in (current_dir, reference_dir):
+            path = Path(directory) / filename
+            if path.is_file():
+                names.update(pd.read_csv(path)["audit"].astype(str))
+    return names
+
+
+def summarize(diff: dict) -> dict:
+    """Per kind, one dict per audit: rows compared, rows flagged, largest absolute delta (None if no numeric delta)."""
+    out = {}
+    for kind, rows in diff.items():
+        per_audit = {}
+        for r in rows:
+            s = per_audit.setdefault(r["audit"], {"audit": r["audit"], "compared": 0, "flagged": 0,
+                                                  "max_abs_delta": None, "different_sample": 0, "withheld": 0})
+            s["compared"] += 1
+            s["flagged"] += _flagged(r)
+            s["withheld"] += r["status"] == "withheld"
+            s["different_sample"] += r.get("sample") == "different"
+            if r["delta"] is not None and (s["max_abs_delta"] is None or abs(r["delta"]) > s["max_abs_delta"]):
+                s["max_abs_delta"] = abs(r["delta"])
+        out[kind] = [per_audit[a] for a in sorted(per_audit)]
+    return out
+
+
+def read_provenance(directory) -> dict | None:
+    """Where a result set came from (#1129): the commit, Python and library versions read from PROVENANCE.json (written by
+    `faircode benchmark`) or, for the frozen snapshot, from its MANIFEST.md. None when neither exists."""
+    directory = Path(directory)
+    record = directory / "PROVENANCE.json"
+    if record.is_file():
+        runs = json.loads(record.read_text(encoding="utf-8")).get("runs", [])
+        if not runs:
+            return None
+        last = runs[-1]
+        return {"source": "PROVENANCE.json", "commit": last.get("commit"), "dirty": last.get("dirty"), "python": last.get("python"),
+                "libraries": {k.lower(): v for k, v in (last.get("libraries") or {}).items() if v}, "runs": len(runs),
+                "description": last.get("description")}
+    manifest = directory / "MANIFEST.md"
+    if manifest.is_file():
+        text = manifest.read_text(encoding="utf-8")
+        field = lambda name: (re.search(rf"\*\*{re.escape(name)}:\*\*\s*`?([^`\n]+)`?", text) or [None, None])[1]
+        libraries = {n: field(n) for n in ("scikit-learn", "fairlearn", "pandas", "numpy") if field(n)}
+        return {"source": "MANIFEST.md", "commit": field("Git commit"), "dirty": None, "python": field("Python"),
+                "libraries": libraries, "runs": 1, "description": "frozen snapshot"}
+    return None
+
+
+def describe_provenance(label, info) -> str:
+    if info is None:
+        return f"{label}: no provenance recorded"
+    commit = (info["commit"] or "unknown")[:7] + (" (dirty tree)" if info.get("dirty") else "")
+    libs = ", ".join(f"{name} {version}" for name, version in sorted(info["libraries"].items()))
+    runs = f", {info['runs']} runs" if info.get("runs", 1) > 1 else ""
+    return f"{label}: commit {commit}, Python {info['python']}{runs}; {libs or 'no library versions'}"
+
+
+def provenance_report(current_dir, reference_dir) -> str:
+    """Both sides' provenance and the library versions that differ, so a moved row can be told apart from a library bump."""
+    cur, ref = read_provenance(current_dir), read_provenance(reference_dir)
+    lines = [describe_provenance("current  ", cur), describe_provenance("reference", ref)]
+    if cur and ref:
+        names = sorted(set(cur["libraries"]) & set(ref["libraries"]))   # only libraries both sides recorded
+        differ = [f"{n} {ref['libraries'][n]} -> {cur['libraries'][n]}" for n in names if cur["libraries"][n] != ref["libraries"][n]]
+        if cur["python"] != ref["python"]:
+            differ.insert(0, f"python {ref['python']} -> {cur['python']}")
+        lines.append("versions that differ: " + (", ".join(differ) if differ else "none"))
+    return "\n".join(lines) + "\n\n"
+
+
+
+def render_summary(summary: dict) -> str:
+    lines = []
+    for kind, audits in summary.items():
+        lines.append(f"{kind}:")
+        for s in audits:
+            largest = "n/a" if s["max_abs_delta"] is None else f"{s['max_abs_delta']:.4f}"
+            lines.append(f"  {s['audit']}: {s['compared']} compared, {s['flagged']} flagged, "
+                         f"{s['withheld']} withheld, {s['different_sample']} on different test sets, largest |delta| {largest}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _flagged(row: dict) -> bool:
     return row["status"] != "unchanged"
 
 
-def render(diff: dict, show_all: bool = False, threshold: float = DEFAULT_THRESHOLD) -> str:
+def render(diff: dict, show_all: bool = False, threshold: float = DEFAULT_THRESHOLD, limit: int | None = None) -> str:
+    """`limit` caps the rows listed per kind (withheld rows count too); the rest are counted in a closing line (#1131)."""
     lines = []
     for kind, rows in diff.items():
         keys = KINDS[kind][1]
         flagged = [r for r in rows if _flagged(r)]
+        different = sum(r.get("sample") == "different" for r in rows)
         lines.append(f"{kind}: {len(rows)} rows compared, {len(flagged)} flagged "
-                     f"(moved by more than {threshold:g}, or present on one side only)")
-        for r in rows if show_all else flagged:
+                     f"(moved by more than {threshold:g}, or present on one side only), "
+                     f"{different} measured on different test sets")
+        withheld = []
+        listed = 0
+        shown = rows if show_all else flagged
+        for r in shown:
+            if limit is not None and listed >= limit:
+                break
+            listed += 1
             label = " / ".join(r[k] for k in keys)
+            if r["status"] == "withheld":
+                notes = r["withheld"]
+                side = lambda name, value: (f"{name} withheld ({notes[name]})" if notes[name]
+                                            else f"{name} {value:.4f}")
+                withheld.append(f"  ! {label}: {side('reference', r['reference'])}, {side('current', r['current'])}")
+                continue
             if r["status"] == "only_current":
                 detail = f"only in results/ (current {r['current']:.4f})" if r["current"] is not None else "only in results/"
             elif r["status"] == "only_reference":
@@ -108,7 +269,16 @@ def render(diff: dict, show_all: bool = False, threshold: float = DEFAULT_THRESH
                 delta = "n/a" if r["delta"] is None else f"{r['delta']:+.4f}"
                 detail = f"{ref} -> {cur} ({delta})"
             mark = "!" if _flagged(r) else " "
+            if r.get("sample") == "different":
+                sizes = r["sample_sizes"]
+                detail += f" [different test set: reference {sizes['reference']}, current {sizes['current']}]"
+                mark = "~" if mark == " " else mark
             lines.append(f"  {mark} {label}: {detail}")
+        if withheld:
+            lines.append(f"  withheld ({len(withheld)} rows where the benchmark chose not to report a value, with its reason):")
+            lines.extend(withheld)
+        if listed < len(shown):
+            lines.append(f"  ... {len(shown) - listed} more rows not listed (--limit {limit}); run without --limit for all of them")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -124,19 +294,46 @@ def main(argv=None) -> int:
     p.add_argument("--all", action="store_true", help="list unchanged rows too")
     p.add_argument("--json", action="store_true", help="print the diff as JSON")
     p.add_argument("--fail-on-change", action="store_true", help="exit 1 if any row is flagged")
+    p.add_argument("--audit", action="append", metavar="NAME",
+                   help="only compare this audit (repeatable; default: every audit)")
+    p.add_argument("--limit", type=int, metavar="N",
+                   help="list at most N rows per kind and count the rest (keeps a PR comment under GitHub's size limit)")
+    p.add_argument("--summary", action="store_true",
+                   help="print one line per audit and kind instead of every row")
     args = p.parse_args(argv)
     if args.threshold < 0:
         p.error("--threshold must be zero or positive")
+    if args.limit is not None and args.limit < 1:
+        p.error("--limit must be at least 1")
     kinds = ("fairness", "performance") if args.kind == "both" else (args.kind,)
     try:
-        diff = diff_dirs(args.current, args.reference, kinds, args.threshold)
+        if args.audit:
+            unknown = sorted(set(args.audit) - known_audits(args.current, args.reference, kinds))
+            if unknown:
+                available = sorted(known_audits(args.current, args.reference, kinds))
+                print(f"error: unknown audit(s): {', '.join(unknown)}", file=sys.stderr)
+                if available:
+                    print(f"Available audits: {', '.join(available)}", file=sys.stderr)
+                    for name in unknown:
+                        matches = difflib.get_close_matches(
+                            name, available, n=1, cutoff=0.4
+                        )
+                        if matches:
+                            print(f"Did you mean '{matches[0]}'?", file=sys.stderr)
+                return 2
+        diff = diff_dirs(args.current, args.reference, kinds, args.threshold, args.audit)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    if args.json:
+    if not args.json:
+        print(provenance_report(args.current, args.reference), end="")
+    if args.summary:
+        summary = summarize(diff)
+        print(json.dumps(summary, indent=2) if args.json else render_summary(summary), end="\n" if args.json else "")
+    elif args.json:
         print(json.dumps(diff, indent=2))
     else:
-        print(render(diff, args.all, args.threshold), end="")
+        print(render(diff, args.all, args.threshold, args.limit), end="")
     if args.fail_on_change and any(_flagged(r) for rows in diff.values() for r in rows):
         return 1
     return 0

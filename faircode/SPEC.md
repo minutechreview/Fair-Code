@@ -257,6 +257,9 @@ one intersection. The per-group detail is not lost: every group stays in `dimens
 (`--json`) and the CSV rows. The terminal, HTML and web views list at most `MAX_DISPLAYED_FLAGS`
 (**50**) flags, then "and N more flags".
 
+Flag text uses `row` when the reported count is 1 and `rows` for every other count, including
+individual small-group and intersection-cell flags and capped summaries.
+
 ---
 
 ## 7. Defaults (single place to tune)
@@ -604,7 +607,25 @@ issue #388, verified by building an actual wheel and installing it in a clean ve
 reports each row as `moved` (|current − reference| greater than `--threshold`, default 0.01, or a
 value empty on one side only), `unchanged`, `only_current` or `only_reference`. Rows present on one
 side only are always flagged. `--json` prints the structured diff, `--all` lists unchanged rows, and
-`--fail-on-change` exits 1 when anything is flagged. It only reads both directories.
+`--fail-on-change` exits 1 when anything is flagged. `--audit NAME` (repeatable) restricts the
+join to those audits, and `--summary` prints one line per audit and kind instead (rows compared,
+rows flagged, rows on different test sets, largest absolute delta); both work with `--json`. Each row also
+has a `sample` field: `same` when both files report the same group sizes (fairness: `n_disadvantaged` and
+`n_advantaged`; performance: `n`), `different` when they differ (the two runs were scored on different test
+rows, so the delta mixes a model change with a change in who was tested; `sample_sizes` holds both), and
+`unknown` when a size is missing or the row is on one side only. A row whose value is empty on one side while that side's `note` explains why (the disparate impact ratio withheld as `advantaged_selection_too_rare`, #1132) has the status `withheld`, with `withheld` holding both notes: it is listed in its own block, counted separately by `--summary`, and counts as flagged for `--fail-on-change`; a row withheld on both sides is `unchanged`. The text and summary output start with both sides' provenance (`results/PROVENANCE.json`, or the frozen `MANIFEST.md`) and the library versions that differ (#1129). It only reads both directories.
+
+### Loading an audit in code
+
+`faircode.benchmark.load_audit(folder, strategy=None, random_state=None)` (#1078) loads the audit in
+`folder` (a directory holding `audit.yaml`, or the manifest path) with the code path
+`run_audit` uses: the manifest's row filters and target, the protected-attribute masks, ordinal
+encoding of every core, proxy and protected column, and the manifest's stratified train/test split.
+It returns an `AuditData` with `manifest`, `X_all` (every encoded column), `X` (the columns the chosen
+`strategy` trains on; the S2 core-feature set when `strategy` is None), `y`, `masks` (attribute name to a
+0/1 Series, 1 for the disadvantaged group), `idx_train`, `idx_test`, `random_state` and `df` (the filtered raw rows in the same order, for columns the harness does not encode). `group(name)` returns attribute `name` as a plain 0/1 integer array (so `group('age') * 2 + group('gender')` is integer arithmetic), and `train_group(name)` and `test_group(name)` return it for the training and test rows (#1133). `run_audit`
+calls the same `prepare_audit()`, so explainers, notebooks and tests that use the helper cannot drift
+from `results/`.
 
 ---
 

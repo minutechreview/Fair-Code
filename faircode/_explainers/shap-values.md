@@ -124,7 +124,7 @@ Race is gone from the feature set. The model now distributes influence across le
 
 ---
 
-## How to Use SHAP in Practice
+## Detection Code: How to Use SHAP in Practice
 
 ### Installation
 
@@ -250,6 +250,12 @@ Explainability is not a nice-to-have. It is the mechanism by which accountabilit
 SHAP values do not fix bias. Removing protected attributes and proxy variables fixes bias. What SHAP does is make the model's reasoning visible - so you can catch problems before deployment, explain decisions to the people affected by them, and demonstrate to auditors and regulators that the system is operating as intended.
 
 The pipeline is not complete until you can explain every decision the model makes.
+
+---
+
+## Related Concepts
+
+* [What Is LIME?](lime.md) - a local surrogate compared with exact attributions
 
 ---
 

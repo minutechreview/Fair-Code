@@ -459,7 +459,9 @@
     return out;
   }
 
-  function recordsToTable(records) {
+  // `typed` is true for JSON, whose cells carry their own type: only null (or an absent key) is missing, so the
+  // strings "NA" and "" stay values, as in pandas (#1036). A sheet's cells go through isMissing() like CSV text.
+  function recordsToTable(records, typed) {
     if (!records.length) return { columns: [], rows: [] };
     records = records.map(function (r) {
       return r && typeof r === 'object' && !Array.isArray(r) ? flattenRecord(r, '', {}) : r;
@@ -482,6 +484,7 @@
       var obj = {};
       for (var ci = 0; ci < columns.length; ci++) {
         var raw = item[columns[ci]];
+        if (typed) { obj[columns[ci]] = raw === undefined ? null : raw; continue; }
         raw = raw === undefined ? '' : raw;
         obj[columns[ci]] = isMissing(raw) ? null : raw;
       }
@@ -503,7 +506,7 @@
       records.push(record);
     });
     if (!records.length) throw new Error('dataset is empty (no header row)');
-    return recordsToTable(records);
+    return recordsToTable(records, true);
   }
 
   // ── JSON parsing ────────────────────────────────────────────────────────
@@ -531,7 +534,7 @@
       if (!parsed[0] || typeof parsed[0] !== "object" || Array.isArray(parsed[0])) {
         throw new Error("Unsupported JSON format (expected records or split orientation).");
       }
-      return recordsToTable(parsed);
+      return recordsToTable(parsed, true);
     }
 
     // 2. Split format: { columns: ["colA", "colB"], data: [[1, 2], ...] }
@@ -544,8 +547,7 @@
         var splitObj = {};
         for (var sci = 0; sci < splitColumns.length; sci++) {
           var splitRaw = rowVal[sci];
-          splitRaw = splitRaw === undefined ? '' : splitRaw;
-          splitObj[splitColumns[sci]] = isMissing(splitRaw) ? null : splitRaw;
+          splitObj[splitColumns[sci]] = splitRaw === undefined ? null : splitRaw;
         }
         splitRows.push(splitObj);
       }
@@ -585,8 +587,7 @@
           var colObj = {};
           for (var cni2 = 0; cni2 < colNames.length; cni2++) {
             var colRaw = parsed[colNames[cni2]][indexKeys[ri]];
-            colRaw = colRaw === undefined ? '' : colRaw;
-            colObj[colNames[cni2]] = isMissing(colRaw) ? null : colRaw;
+            colObj[colNames[cni2]] = colRaw === undefined ? null : colRaw;
           }
           colRows.push(colObj);
         }
@@ -608,9 +609,10 @@
   // with raw: true returned the Excel serial number (43831) instead (#1039). Date cells are
   // rewritten to that text before sheet_to_json, from the serial's own calendar parts rather than
   // a JS Date, so the label does not depend on the machine's time zone. A time-only cell prints
-  // as "HH:MM:SS", like Python's datetime.time.
-  function formatXlsxDateCell(serial) {
-    var c = global.XLSX.SSF.parse_date_code(serial);
+  // as "HH:MM:SS", like Python's datetime.time. A workbook saved with the 1904 date system (old Mac
+  // Excel) stores serials 1,462 days smaller, so its flag is passed through (#1076).
+  function formatXlsxDateCell(serial, date1904) {
+    var c = global.XLSX.SSF.parse_date_code(serial, { date1904: !!date1904 });
     if (!c) return null;
     function p(n, w) { n = String(n); while (n.length < (w || 2)) n = '0' + n; return n; }
     var time = p(c.H) + ':' + p(c.M) + ':' + p(Math.floor(c.S));
@@ -618,16 +620,32 @@
     return p(c.y, 4) + '-' + p(c.m) + '-' + p(c.d) + ' ' + time;
   }
 
-  function stringifyXlsxDateCells(sheet) {
+  function stringifyXlsxDateCells(sheet, date1904) {
     Object.keys(sheet).forEach(function (addr) {
       if (addr.charAt(0) === '!') return;
       var cell = sheet[addr];
       if (cell && cell.t === 'n' && typeof cell.v === 'number' && cell.z &&
           global.XLSX.SSF.is_date(cell.z)) {
-        var text = formatXlsxDateCell(cell.v);
+        var text = formatXlsxDateCell(cell.v, date1904);
         if (text !== null) sheet[addr] = { t: 's', v: text, w: text };
       }
     });
+  }
+
+  function xlsxHeaderText(value) {
+    if (typeof value === 'boolean') return value ? 'True' : 'False';
+    return value === null || value === undefined ? '' : String(value);
+  }
+
+  function normalizeXlsxBooleanHeaderCells(sheet) {
+    if (!sheet['!ref']) return;
+    var range = global.XLSX.utils.decode_range(sheet['!ref']);
+    for (var c = range.s.c; c <= range.e.c; c++) {
+      var cell = sheet[global.XLSX.utils.encode_cell({ r: range.s.r, c: c })];
+      if (cell && cell.t === 'b' && typeof cell.v === 'boolean') {
+        cell.w = xlsxHeaderText(cell.v);
+      }
+    }
   }
 
   async function parseXLSX(arrayBuffer) {
@@ -644,7 +662,10 @@
     if (!sheetName) return { table: { columns: [], rows: [] }, ignoredSheets: [], sheetName: null };
 
     var sheet = workbook.Sheets[sheetName];
-    stringifyXlsxDateCells(sheet);
+    var date1904 = !!(workbook.Workbook && workbook.Workbook.WBProps &&
+                      workbook.Workbook.WBProps.date1904);
+    stringifyXlsxDateCells(sheet, date1904);
+    normalizeXlsxBooleanHeaderCells(sheet);
     var records = global.XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
 
     if (records.length === 0) {
@@ -654,7 +675,7 @@
       // read the raw header row instead of erroring, to match.
       var headerRow = global.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true })[0] || [];
       var columns = headerRow.map(function (h) {
-        return h === null || h === undefined ? '' : String(h);
+        return xlsxHeaderText(h);
       });
       return { table: { columns: columns, rows: [] }, ignoredSheets: workbook.SheetNames.slice(1), sheetName: sheetName };
     }
@@ -1828,14 +1849,16 @@
         if (g.small_group) {
           entries.push({kind: 'small', count: g.count, text:
             d.name + ": '" + g.label + "' has only " +
-            g.count + " rows; fairness metrics may be unreliable"});
+            g.count + (g.count === 1 ? " row" : " rows") +
+            "; fairness metrics may be unreliable"});
         }
       });
       flags = flags.concat(summariseGroupFlags(entries, {
         'case': function (n) { return d.name + ': ' + n + ' pairs of labels differ only in case or spacing'; },
         under: function (n) { return d.name + ': ' + n + ' groups are under-represented'; },
         small: function (n, c) {
-          return d.name + ': ' + n + ' groups have only ' + c + ' rows or fewer; fairness metrics may be unreliable';
+          return d.name + ': ' + n + ' groups have only ' + c +
+                 (c === 1 ? ' row' : ' rows') + ' or fewer; fairness metrics may be unreliable';
         }
       }));
       if (d.imbalance_ratio !== null && d.imbalance_ratio >= imbalanceFlag) {
@@ -1863,13 +1886,17 @@
     inters.forEach(function (inter) {
       var a = inter.dims[0], b = inter.dims[1];
       var entries = inter.cells.map(function (cell) {
-        var kind = cell.count === 0 ? 'absent' : 'only ' + cell.count + ' rows';
+        var kind = cell.count === 0 ? 'absent' : 'only ' + cell.count +
+                   (cell.count === 1 ? ' row' : ' rows');
         return {kind: cell.count === 0 ? 'absent' : 'thin', count: cell.count,
                 text: a + "='" + cell.a + "' × " + b + "='" + cell.b + "' is " + kind};
       });
       flags = flags.concat(summariseGroupFlags(entries, {
         absent: function (n) { return a + ' × ' + b + ': ' + n + ' combinations are absent'; },
-        thin: function (n, c) { return a + ' × ' + b + ': ' + n + ' combinations have only ' + c + ' rows or fewer'; }
+        thin: function (n, c) {
+          return a + ' × ' + b + ': ' + n + ' combinations have only ' + c +
+                 (c === 1 ? ' row' : ' rows') + ' or fewer';
+        }
       }));
     });
     return flags;

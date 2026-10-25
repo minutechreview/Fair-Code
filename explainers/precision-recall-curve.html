@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>What Is a Precision-Recall Curve? · Fair Code</title>
-<meta name="description" content="Learn what a precision-recall curve and average precision (AP) measure, and why they&#x27;re the honest picture under the heavy class imbalance most fairness audits live in - rare positives, skewed base rates - where ROC/AUC&#x27;s own arithmetic stays lenient. Anchored to Healthcare Readmission&#x27;s 11.2% base rate (frozen 88.7% accuracy, 0.62 AUC, but 0.039 F1), with per-group average-precision detection code.">
+<meta name="description" content="What precision-recall curves and average precision measure, and why they are the honest picture under the class imbalance of most fairness audits.">
 <link rel="canonical" href="https://www.thefaircode.xyz/explainers/precision-recall-curve.html">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
 <meta property="og:title" content="What Is a Precision-Recall Curve? · Fair Code">
-<meta property="og:description" content="Learn what a precision-recall curve and average precision (AP) measure, and why they&#x27;re the honest picture under the heavy class imbalance most fairness audits live in - rare positives, skewed base rates - where ROC/AUC&#x27;s own arithmetic stays lenient. Anchored to Healthcare Readmission&#x27;s 11.2% base rate (frozen 88.7% accuracy, 0.62 AUC, but 0.039 F1), with per-group average-precision detection code.">
+<meta property="og:description" content="What precision-recall curves and average precision measure, and why they are the honest picture under the class imbalance of most fairness audits.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://www.thefaircode.xyz/explainers/precision-recall-curve.html">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og/precision-recall-curve.png">
@@ -26,7 +26,7 @@
 <meta property="og:image:alt" content="What Is a Precision-Recall Curve? · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="What Is a Precision-Recall Curve? · Fair Code">
-<meta name="twitter:description" content="Learn what a precision-recall curve and average precision (AP) measure, and why they&#x27;re the honest picture under the heavy class imbalance most fairness audits live in - rare positives, skewed base rates - where ROC/AUC&#x27;s own arithmetic stays lenient. Anchored to Healthcare Readmission&#x27;s 11.2% base rate (frozen 88.7% accuracy, 0.62 AUC, but 0.039 F1), with per-group average-precision detection code.">
+<meta name="twitter:description" content="What precision-recall curves and average precision measure, and why they are the honest picture under the class imbalance of most fairness audits.">
 <meta name="twitter:image" content="https://www.thefaircode.xyz/assets/og/precision-recall-curve.png">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-08-17",
-      "dateModified": "2026-08-17"
+      "dateModified": "2026-10-24"
     },
     {
       "@type": "FAQPage",
@@ -296,7 +296,7 @@ def group_pr_points(df, y_true_col, y_score_col, group_col):
 <h4 id="4-equal-ap-across-groups-is-not-equal-treatment">4. Equal AP across groups is not equal treatment</h4>
 <p>Two groups can have identical AP while one group&#x27;s curve reaches that area through high precision at low recall and the other&#x27;s through the reverse - meaning the two groups experience very different trade-offs at any shared threshold, even though the summary number matches.</p>
 <h3 id="related-concepts">Related Concepts</h3>
-<ul><li><a href="roc-curve-auc.html">ROC Curve and AUC</a> - the other threshold-free ranking summary, and why its own arithmetic is lenient about rare positives in exactly the way this explainer describes.</li><li><a href="false-positives-vs-false-negatives.html">False Positives vs. False Negatives in Medical Risk Models</a> - the per-threshold error breakdown that both AUC and AP average over.</li><li><a href="class-imbalance.html">What Is Class Imbalance?</a> - the underlying condition (skewed positive/negative ratios) that makes the ROC-vs-PR distinction matter in the first place.</li><li><a href="predictive-parity.html">What Is Predictive Parity?</a> - a fairness metric built directly from precision, and the COMPAS dispute over whether equalizing it is enough.</li></ul>
+<ul><li><a href="roc-curve-auc.html">ROC Curve and AUC</a> - the other threshold-free ranking summary, and why its own arithmetic is lenient about rare positives in exactly the way this explainer describes.</li><li><a href="false-positives-vs-false-negatives.html">False Positives vs. False Negatives in Medical Risk Models</a> - the per-threshold error breakdown that both AUC and AP average over.</li><li><a href="class-imbalance.html">What Is Class Imbalance?</a> - the underlying condition (skewed positive/negative ratios) that makes the ROC-vs-PR distinction matter in the first place.</li><li><a href="predictive-parity.html">What Is Predictive Parity?</a> - a fairness metric built directly from precision, and the COMPAS dispute over whether equalizing it is enough.</li><li><a href="decision-curve-analysis-by-group.html">What Is Decision Curve Analysis by Group?</a> - net benefit at each threshold, per group</li></ul>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../index.html#project-readmission"><code>Healthcare Readmission/</code></a> - the audit behind the concrete example above, where an 11.2% base rate turns a &quot;reasonable&quot; AUC into a near-worthless F1.</li><li><a href="../index.html#project-benefits"><code>Benefits Denial/</code></a> - a second audit with a skewed target (24% positive rate) where the same ROC-vs-PR gap is worth checking.</li></ul>
 <h3 id="further-reading">Further Reading</h3>

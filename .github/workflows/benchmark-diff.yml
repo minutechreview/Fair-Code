@@ -1,0 +1,125 @@
+name: Benchmark diff
+
+# Opt-in: reruns the full benchmark on a pull request's requirements-lock.txt and posts how far the
+# results moved from the committed results/ as a PR comment (#1079). A bump of numpy, pandas,
+# scikit-learn, scipy, fairlearn or matplotlib can change a benchmark number without changing a line
+# of code (see "Dependency updates" in CONTRIBUTING.md); this makes the check one click.
+#
+# Start it by adding the `rerun-benchmark` label to the PR, or run it from the Actions tab with the PR
+# number. It is slow (the full benchmark), so it never runs on its own and is not a required check.
+# It only reads: nothing is committed, and paper/results-frozen/ is not touched.
+
+on:
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+    # `opened`/`synchronize` only matter to the smoke job below; the full rerun still needs the label.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to rerun the benchmark for
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # Keep smoke runs separate from full reruns; unrelated label events get a no-op group.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr }}-${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'rerun-benchmark')) && 'full' || (github.event_name == 'pull_request' && github.event.action != 'labeled') && 'smoke' || 'noop' }}
+  cancel-in-progress: true
+
+jobs:
+  # Exercises the whole path (checkout of the merge ref, locked install, benchmark, diff, comment text) on the
+  # smallest audit when the workflow or the diff script itself changes, without the 2 hour full run (#1131).
+  # It builds the comment but does not post it.
+  smoke:
+    if: github.event_name == 'pull_request' && github.event.action != 'labeled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Does this change touch the benchmark diff?
+        id: touched
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qE '^(\.github/workflows/benchmark-diff\.yml|scripts/diff_results\.py)$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Neither the workflow nor scripts/diff_results.py changed: nothing to smoke-test."
+          fi
+
+      - uses: actions/setup-python@v7
+        if: steps.touched.outputs.run == 'true'
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install the locked versions
+        if: steps.touched.outputs.run == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lock.txt
+          pip install -e ".[benchmark]" --no-deps
+
+      - name: Rerun one audit and build the comment
+        if: steps.touched.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          faircode benchmark --no-plots --n-resamples 50 --n-permutations 50 --out "$RUNNER_TEMP/smoke" "German Credit Lending/audit.yaml"
+          python3 scripts/diff_results.py --current "$RUNNER_TEMP/smoke" --reference results --audit german_credit_lending --summary
+          python3 scripts/diff_results.py --current "$RUNNER_TEMP/smoke" --reference results --audit german_credit_lending --limit 20 | head -c 60000
+
+  benchmark-diff:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'rerun-benchmark')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number || inputs.pr }}/merge
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install the locked versions
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lock.txt
+          pip install -e ".[benchmark]" --no-deps
+
+      - name: Rerun the full benchmark
+        run: faircode benchmark --no-plots --out "$RUNNER_TEMP/bump-results"
+
+      - name: Diff against the committed results
+        run: |
+          set -euo pipefail
+          {
+            echo "### Benchmark rerun on this PR's lockfile"
+            echo
+            echo "Compared with the committed \`results/\` (rows that moved by more than 0.001, or exist on one side only)."
+            echo
+            echo '```'
+            python3 scripts/diff_results.py --current "$RUNNER_TEMP/bump-results" --reference results --threshold 0.001 --summary
+            echo '```'
+            echo
+            echo "<details><summary>Moved rows</summary>"
+            echo
+            echo '```'
+            python3 scripts/diff_results.py --current "$RUNNER_TEMP/bump-results" --reference results --threshold 0.001 --limit 100 | head -c 50000
+            echo '```'
+            echo "</details>"
+            echo
+            echo "If rows moved, refresh \`results/\` in this PR or an immediate follow-up and say so; if nothing moved, say that. Run id: ${{ github.run_id }}."
+          } > "$RUNNER_TEMP/comment.md"
+
+      - name: Post the diff on the pull request
+        run: gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"

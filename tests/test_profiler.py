@@ -22,6 +22,15 @@ from faircode.profiler import (
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.parametrize("value", ["data.csv", ["M", "F"]])
+def test_profile_rejects_non_dataframes_with_a_clear_type_error(value):
+    with pytest.raises(TypeError) as error:
+        profile(value)
+
+    assert "profile() expected a pandas.DataFrame" in str(error.value)
+    assert type(value).__name__ in str(error.value)
+
+
 # ── Column detection ────────────────────────────────────────────────────────
 def test_classify_keyword_columns():
     assert classify_name("gender") == "sex"
@@ -204,6 +213,16 @@ def test_min_group_size_tunable():
 
     flags = result["flags"]
     assert not any("fairness metrics may be unreliable" in f for f in flags)
+
+
+def test_single_row_flags_use_singular_row():
+    df = pd.DataFrame({"sex": ["M", "F", "F"], "race": ["A", "B", "B"]})
+
+    result = profile(df, opts={"min_group_size": 3, "intersection_floor": 0.34})
+
+    assert "sex: 'M' has only 1 row; fairness metrics may be unreliable" in result["flags"]
+    assert "sex: 'F' has only 2 rows; fairness metrics may be unreliable" in result["flags"]
+    assert "sex='M' × race='A' is only 1 row" in result["flags"]
 
 
 def test_max_categorical_card_tunable():

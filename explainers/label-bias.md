@@ -360,6 +360,10 @@ Disparate Treatment occurs when a protected attribute is used directly in the de
 ### Fairness Metric Conflicts
 
 Any fairness constraint applied to correct for label bias will trade off against accuracy on the biased labels. This apparent trade-off is a feature, not a bug - but it registers as an accuracy drop in standard evaluation. See the [fairness metric conflicts explainer](fairness-metric-conflicts.md).
+- [The Biggest Myth About AI Objectivity](ai-objectivity-myth.md) - why a model trained on human decisions is not objective
+- [What Is Data Leakage?](data-leakage.md) - information the model should not have at prediction time
+- [The Obermeyer Case](obermeyer-cost-proxy.md) - a label that measures spending, not illness
+- [How Does Position Bias Distort What a Ranking Learns?](position-bias-and-click-models.md) - separating position from relevance in click data
 
 ---
 
@@ -373,7 +377,7 @@ Any fairness constraint applied to correct for label bias will trade off against
 
 ## Further Reading
 
-- [Barocas & Selbst (2016): *Big Data's Disparate Impact*, 104 Calif. L. Rev. 671](https://www.californialawreview.org/print/2-big-datas-disparate-impact) - Section III covers biased training labels as a mechanism of algorithmic discrimination
+- [Barocas & Selbst (2016): *Big Data's Disparate Impact*, 104 Calif. L. Rev. 671](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2477899) - Section III covers biased training labels as a mechanism of algorithmic discrimination
 - [Friedler et al. (2019): *A Comparative Study of Fairness-Enhancing Interventions in Machine Learning*](https://arxiv.org/abs/1802.04422) - empirical comparison of pre-, in-, and post-processing mitigation strategies, including label noise correction
 - [Jacobs & Wallach (2021): *Measurement and Fairness*, FAccT 2021](https://arxiv.org/abs/1912.05511) - the definitive paper on the gap between what ML labels purport to measure and what they actually encode
 - [Obermeyer et al. (2019): *Dissecting Racial Bias in an Algorithm Used to Manage the Health of Populations*, Science](https://www.science.org/doi/10.1126/science.aax2342) - landmark audit showing a healthcare algorithm that used healthcare cost as a proxy for health need; the label itself (cost) was biased because Black patients had less access to care at equal health levels

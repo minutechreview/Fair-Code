@@ -3,30 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>What Is a Counterfactual Explanation? (And How It Differs From Counterfactual Fairness) · Fair Code</title>
-<meta name="description" content="Learn what a counterfactual explanation is - the smallest input change that flips one specific decision - and why it&#x27;s a different concept from Counterfactual Fairness despite the shared name. Covers the basis for real adverse-action notices in lending, with a from-scratch nearest-counterfactual search over German Credit Lending.">
+<title>What Is a Counterfactual Explanation? · Fair Code</title>
+<meta name="description" content="What a counterfactual explanation is, why it differs from Counterfactual Fairness, and a from-scratch nearest-counterfactual search on German Credit.">
 <link rel="canonical" href="https://www.thefaircode.xyz/explainers/counterfactual-explanation.html">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
-<meta property="og:title" content="What Is a Counterfactual Explanation? (And How It Differs From Counterfactual Fairness) · Fair Code">
-<meta property="og:description" content="Learn what a counterfactual explanation is - the smallest input change that flips one specific decision - and why it&#x27;s a different concept from Counterfactual Fairness despite the shared name. Covers the basis for real adverse-action notices in lending, with a from-scratch nearest-counterfactual search over German Credit Lending.">
+<meta property="og:title" content="What Is a Counterfactual Explanation? · Fair Code">
+<meta property="og:description" content="What a counterfactual explanation is, why it differs from Counterfactual Fairness, and a from-scratch nearest-counterfactual search on German Credit.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://www.thefaircode.xyz/explainers/counterfactual-explanation.html">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og/counterfactual-explanation.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
-<meta property="og:image:alt" content="What Is a Counterfactual Explanation? (And How It Differs From Counterfactual Fairness) · Fair Code">
+<meta property="og:image:alt" content="What Is a Counterfactual Explanation? · Fair Code">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og-light/counterfactual-explanation.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
-<meta property="og:image:alt" content="What Is a Counterfactual Explanation? (And How It Differs From Counterfactual Fairness) · Fair Code (light)">
+<meta property="og:image:alt" content="What Is a Counterfactual Explanation? · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="What Is a Counterfactual Explanation? (And How It Differs From Counterfactual Fairness) · Fair Code">
-<meta name="twitter:description" content="Learn what a counterfactual explanation is - the smallest input change that flips one specific decision - and why it&#x27;s a different concept from Counterfactual Fairness despite the shared name. Covers the basis for real adverse-action notices in lending, with a from-scratch nearest-counterfactual search over German Credit Lending.">
+<meta name="twitter:title" content="What Is a Counterfactual Explanation? · Fair Code">
+<meta name="twitter:description" content="What a counterfactual explanation is, why it differs from Counterfactual Fairness, and a from-scratch nearest-counterfactual search on German Credit.">
 <meta name="twitter:image" content="https://www.thefaircode.xyz/assets/og/counterfactual-explanation.png">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-08-29",
-      "dateModified": "2026-09-17"
+      "dateModified": "2026-10-23"
     },
     {
       "@type": "FAQPage",
@@ -184,7 +184,7 @@
 
     <section class="explainer-hero">
       <div class="explainer-kicker">Explainer</div>
-      <h1 class="explainer-headline">What Is a Counterfactual Explanation? (And How It Differs From Counterfactual Fairness)</h1>
+      <h1 class="explainer-headline">What Is a Counterfactual Explanation?</h1>
       <p class="explainer-lede">One asks what changed the outcome. The other asks whether the outcome should have changed at all.</p>
       <p class="explainer-lede">Learn what a counterfactual explanation is - the smallest input change that flips one specific decision - and why it&#x27;s a different concept from Counterfactual Fairness despite the shared name. Covers the basis for real adverse-action notices in lending, with a from-scratch nearest-counterfactual search over German Credit Lending.</p>
     </section>
@@ -291,7 +291,7 @@ def nearest_counterfactual(model, instance, actionable_features, feature_ranges,
 <h4 id="4-the-suggested-change-can-still-be-indirectly-discriminatory">4. The suggested change can still be indirectly discriminatory</h4>
 <p>A counterfactual that suggests &quot;move to a different zip code&quot; is technically actionable but not realistically so, and can smuggle a protected-attribute-adjacent proxy back into the advice given to the applicant.</p>
 <h3 id="related-concepts">Related Concepts</h3>
-<ul><li><a href="counterfactual-fairness.html">Counterfactual Fairness</a> - the fairness <em>definition</em> this explainer is explicitly not about, despite the shared name.</li><li><a href="shap-values.html">What Are SHAP Values?</a> and <a href="lime.html">What Is LIME?</a> - the two feature-attribution explainability methods this one is offered as a third alternative to.</li><li><a href="protected-attribute.html">Protected Attribute</a> - why an actionable-feature constraint has to exclude these by definition.</li></ul>
+<ul><li><a href="counterfactual-fairness.html">Counterfactual Fairness</a> - the fairness <em>definition</em> this explainer is explicitly not about, despite the shared name.</li><li><a href="shap-values.html">What Are SHAP Values?</a> and <a href="lime.html">What Is LIME?</a> - the two feature-attribution explainability methods this one is offered as a third alternative to.</li><li><a href="protected-attribute.html">Protected Attribute</a> - why an actionable-feature constraint has to exclude these by definition.</li><li><a href="algorithmic-recourse.html">Algorithmic Recourse</a> - limiting a counterfactual to changes a person can make</li></ul>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../index.html#project-credit"><code>German Credit Lending/</code></a> - the audit used for the counterfactual-search example above.</li></ul>
 <h3 id="further-reading">Further Reading</h3>

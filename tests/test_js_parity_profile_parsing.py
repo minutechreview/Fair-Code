@@ -453,3 +453,53 @@ def test_python_js_read_json_lines_files(tmp_path):
     empty.write_text("\n\n", encoding="utf-8")
     with pytest.raises(ValueError, match="dataset is empty"):
         read_any_table(str(empty))
+
+
+def test_split_json_with_integer_column_labels_names_the_columns_as_text(tmp_path):
+    """#1045: a split-orient file whose column labels are the integers 2020 and 7 gives dimensions named "2020" and
+    "7" (text) in Python as in the web engine, not JSON numbers."""
+    text = json.dumps({"columns": [2020, "sex", 7], "index": list(range(30)),
+                       "data": [[i % 3, "m" if i % 2 else "f", ["x", "y"][i % 2]] for i in range(30)]})
+    result = _label_parity(tmp_path, "split.json", text, "profile-json")
+    assert [d["name"] for d in result["dimensions"]] == ["2020", "sex", "7"]
+
+
+def test_an_integer_column_label_can_be_mapped_by_name(tmp_path, capsys):
+    """#1045: --map and --cross match columns by string, so they can only work when the label is text."""
+    from faircode.cli import main
+    path = tmp_path / "split.json"
+    path.write_text(json.dumps({"columns": [2020, "x"], "index": list(range(40)),
+                                "data": [["m" if i % 2 else "f", i % 5] for i in range(40)]}), encoding="utf-8")
+    assert main(["profile", str(path), "--map", "2020=sex", "--json"]) == 0
+    dims = {d["name"]: d for d in json.loads(capsys.readouterr().out)["dimensions"]}
+    assert dims["2020"]["kind"] == "sex"
+
+
+def _na_records(values):
+    return [{"sex": "m" if i % 2 else "f", "race": values[i % len(values)]} for i in range(40)]
+
+
+def test_json_string_na_and_empty_cells_are_values_in_both_engines(tmp_path):
+    """#1036: a JSON string is typed, so "NA" and "" are groups (as in pandas); only null is missing."""
+    records = _na_records(["a", "NA", "b", ""])
+    result = _label_parity(tmp_path, "na.json", json.dumps(records), "profile-json")
+    assert _labels(result, 1) == [("", 10), ("NA", 10), ("a", 10), ("b", 10)]
+    assert result["dimensions"][1]["missing_pct"] == 0
+    lines = "\n".join(json.dumps(r) for r in records)
+    assert _label_parity(tmp_path, "na.jsonl", lines, "profile-json") == result
+    split = {"columns": ["sex", "race"], "data": [[r["sex"], r["race"]] for r in records]}
+    assert _label_parity(tmp_path, "split.json", json.dumps(split), "profile-json") == result
+
+
+def test_json_null_and_absent_cells_are_still_missing_in_both_engines(tmp_path):
+    records = _na_records(["a", None, "b", "NA"])
+    del records[0]["race"]
+    result = _label_parity(tmp_path, "null.json", json.dumps(records), "profile-json")
+    assert result["dimensions"][1]["missing_pct"] == 0.275
+    assert ("NA", 10) in _labels(result, 1)
+
+
+def test_csv_na_tokens_stay_missing_in_both_engines(tmp_path):
+    rows = "".join(f"{'m' if i % 2 else 'f'},{['a', 'NA', 'b', ''][i % 4]}\n" for i in range(40))
+    result = _label_parity(tmp_path, "na.csv", "sex,race\n" + rows)
+    assert result["dimensions"][1]["missing_pct"] == 0.5

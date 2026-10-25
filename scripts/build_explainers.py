@@ -30,6 +30,7 @@ DATA_JSON = ROOT / "assets" / "explainers-data.json"
 DATA_JS = ROOT / "assets" / "explainers-data.js"
 SITEMAP = ROOT / "sitemap.xml"
 LLMS_FULL = ROOT / "llms-full.txt"
+CODE_DIR = ROOT / "explainers" / "code"      # the runnable block of each explainer, extracted by build_code_files (#1125)
 OG_DIR = ROOT / "assets" / "og"
 OG_LIGHT_DIR = ROOT / "assets" / "og-light"
 
@@ -322,14 +323,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title} · Fair Code</title>
-<meta name="description" content="{summary}">
+<meta name="description" content="{meta_description}">
 <link rel="canonical" href="{canonical}">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
 <meta property="og:title" content="{title} · Fair Code">
-<meta property="og:description" content="{summary}">
+<meta property="og:description" content="{meta_description}">
 <meta property="og:type" content="article">
 <meta property="og:url" content="{canonical}">
 <meta property="og:image" content="{og_image}">
@@ -344,7 +345,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <meta property="og:image:alt" content="{title} · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{title} · Fair Code">
-<meta name="twitter:description" content="{summary}">
+<meta name="twitter:description" content="{meta_description}">
 <meta name="twitter:image" content="{og_image}">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -561,6 +562,43 @@ def build_jsonld(entry, canonical, markdown_text="", dates=None):
                        "@graph": [defined_term, faq_page, breadcrumbs]}, indent=2)
 
 
+TITLE_SUFFIX = " · Fair Code"
+TITLE_MAX = 65          # search results cut a <title> after about this many characters (#1105)
+DESCRIPTION_MIN, DESCRIPTION_MAX, DESCRIPTION_TARGET = 70, 160, 155   # meta descriptions are cut near 160 (#1104)
+
+
+def seo_title(entry):
+    """The page title text: an optional `seo_title` from the data file, else `title`. Raises when the
+    finished <title> would be cut in search results."""
+    text = entry.get("seo_title") or entry["title"]
+    if len(text + TITLE_SUFFIX) > TITLE_MAX:
+        raise ValueError(
+            f"{entry['slug']}: the page title is {len(text + TITLE_SUFFIX)} characters (limit {TITLE_MAX}); "
+            f"add a shorter `seo_title` of at most {TITLE_MAX - len(TITLE_SUFFIX)} characters to assets/explainers-data.json")
+    return text
+
+
+def meta_description(entry):
+    """An optional `description` from the data file, else the summary cut at the last sentence end that
+    fits in DESCRIPTION_TARGET characters (or, if the first sentence is longer, at a word boundary with
+    an ellipsis). Raises when the result is outside DESCRIPTION_MIN..DESCRIPTION_MAX."""
+    text = " ".join((entry.get("description") or entry["summary"]).split())
+    if len(text) > DESCRIPTION_MAX and not entry.get("description"):
+        window = text[:DESCRIPTION_TARGET + 1]
+        ends = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", window)]
+        ends = [e for e in ends if e <= DESCRIPTION_TARGET]
+        if ends and ends[-1] >= DESCRIPTION_MIN:
+            text = text[:ends[-1]].strip()
+        else:
+            cut = text[:DESCRIPTION_TARGET - 3].rsplit(" ", 1)[0].rstrip(",;:- ")
+            text = cut + "..."
+    if not DESCRIPTION_MIN <= len(text) <= DESCRIPTION_MAX:
+        raise ValueError(f"{entry['slug']}: the meta description is {len(text)} characters "
+                         f"(allowed {DESCRIPTION_MIN}-{DESCRIPTION_MAX}); add a `description` to assets/explainers-data.json")
+    return text
+
+
+
 def build_page(entry, known_slugs):
     slug = entry["slug"]
     md_path = EXPLAINERS_DIR / f"{slug}.md"
@@ -573,8 +611,9 @@ def build_page(entry, known_slugs):
     }
 
     return PAGE_TEMPLATE.format(
-        title=escape_html(entry["title"]),
+        title=escape_html(seo_title(entry)),
         summary=escape_html(entry["summary"]),
+        meta_description=escape_html(meta_description(entry)),
         canonical=canonical,
         subtitle=escape_html(entry["subtitle"]),
         content=content_html,
@@ -678,6 +717,43 @@ def build_llms_full(entries):
     return "\n".join(parts) + "\n"
 
 
+CODE_HEADER = "# Generated from explainers/{slug}.md by scripts/build_explainers.py. Edit the markdown, not this file.\n"
+_FENCE = re.compile(r"^```python[^\n]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
+
+
+def extract_code(slug, markdown_text):
+    """The python block an explainer tells the reader to run, or None. An explainer points at its file with the
+    path `explainers/code/<slug>.py` in the text; the first python fence after that mention is the source (#1125).
+    The `# runnable` and `# slow` markers that opt a block into the smoke tests are left out of the file."""
+    marker = f"explainers/code/{slug}.py"
+    at = markdown_text.find(marker)
+    if at < 0:
+        return None
+    match = _FENCE.search(markdown_text, at)
+    if not match:
+        raise ValueError(f"{slug}: the text names {marker} but no python block follows it")
+    lines = [line for line in match.group(1).splitlines() if line.strip() not in {"# runnable", "# slow"}]
+    return CODE_HEADER.format(slug=slug) + "\n".join(lines).strip("\n") + "\n"
+
+
+def build_code_files(entries):
+    """Writes explainers/code/<slug>.py for every explainer that points at one, and removes stale files, so a
+    reader can run what the page shows."""
+    CODE_DIR.mkdir(parents=True, exist_ok=True)
+    wanted = {}
+    for entry in entries:
+        code = extract_code(entry["slug"], (EXPLAINERS_DIR / f"{entry['slug']}.md").read_text(encoding="utf-8"))
+        if code is not None:
+            wanted[f"{entry['slug']}.py"] = code
+    for existing in CODE_DIR.glob("*.py"):
+        if existing.name not in wanted:
+            existing.unlink()
+    for name, code in wanted.items():
+        (CODE_DIR / name).write_text(code, encoding="utf-8")
+    return sorted(wanted)
+
+
+
 def build_package_mirror(entries):
     """Copies assets/explainers-data.json -> faircode/_explainers/data.json
     and every explainers/<slug>.md -> faircode/_explainers/<slug>.md, so the
@@ -738,9 +814,10 @@ def main():
     SITEMAP.write_text(build_sitemap(entries), encoding="utf-8")
     LLMS_FULL.write_text(build_llms_full(entries), encoding="utf-8")
     build_package_mirror(entries)
+    code_files = build_code_files(entries)
 
     print(f"Generated {len(entries)} explainer pages, assets/explainers-data.js, "
-          "sitemap.xml, llms-full.txt, and faircode/_explainers/ (MCP package mirror)")
+          f"sitemap.xml, llms-full.txt, faircode/_explainers/ (MCP package mirror) and {len(code_files)} files in explainers/code/")
 
 
 if __name__ == "__main__":

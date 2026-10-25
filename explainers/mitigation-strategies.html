@@ -3,30 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>What Are Pre-, In-, and Post-Processing Fairness Mitigations? · Fair Code</title>
-<meta name="description" content="Learn the three families of fairness intervention - pre-processing, in-processing, and post-processing - through this repo&#x27;s own five-strategy benchmark ladder. Anchored to COMPAS&#x27;s real frozen progression (85.5% to 17.2% to 11.5% to -1.4% to 2.3% demographic parity gap), showing the three approaches converge rather than compound.">
+<title>Pre-, In-, and Post-Processing Fairness Mitigations · Fair Code</title>
+<meta name="description" content="The three families of fairness intervention (pre-, in- and post-processing) through the repo&#x27;s five-strategy benchmark ladder, with COMPAS results.">
 <link rel="canonical" href="https://www.thefaircode.xyz/explainers/mitigation-strategies.html">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
-<meta property="og:title" content="What Are Pre-, In-, and Post-Processing Fairness Mitigations? · Fair Code">
-<meta property="og:description" content="Learn the three families of fairness intervention - pre-processing, in-processing, and post-processing - through this repo&#x27;s own five-strategy benchmark ladder. Anchored to COMPAS&#x27;s real frozen progression (85.5% to 17.2% to 11.5% to -1.4% to 2.3% demographic parity gap), showing the three approaches converge rather than compound.">
+<meta property="og:title" content="Pre-, In-, and Post-Processing Fairness Mitigations · Fair Code">
+<meta property="og:description" content="The three families of fairness intervention (pre-, in- and post-processing) through the repo&#x27;s five-strategy benchmark ladder, with COMPAS results.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://www.thefaircode.xyz/explainers/mitigation-strategies.html">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og/mitigation-strategies.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
-<meta property="og:image:alt" content="What Are Pre-, In-, and Post-Processing Fairness Mitigations? · Fair Code">
+<meta property="og:image:alt" content="Pre-, In-, and Post-Processing Fairness Mitigations · Fair Code">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og-light/mitigation-strategies.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
-<meta property="og:image:alt" content="What Are Pre-, In-, and Post-Processing Fairness Mitigations? · Fair Code (light)">
+<meta property="og:image:alt" content="Pre-, In-, and Post-Processing Fairness Mitigations · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="What Are Pre-, In-, and Post-Processing Fairness Mitigations? · Fair Code">
-<meta name="twitter:description" content="Learn the three families of fairness intervention - pre-processing, in-processing, and post-processing - through this repo&#x27;s own five-strategy benchmark ladder. Anchored to COMPAS&#x27;s real frozen progression (85.5% to 17.2% to 11.5% to -1.4% to 2.3% demographic parity gap), showing the three approaches converge rather than compound.">
+<meta name="twitter:title" content="Pre-, In-, and Post-Processing Fairness Mitigations · Fair Code">
+<meta name="twitter:description" content="The three families of fairness intervention (pre-, in- and post-processing) through the repo&#x27;s five-strategy benchmark ladder, with COMPAS results.">
 <meta name="twitter:image" content="https://www.thefaircode.xyz/assets/og/mitigation-strategies.png">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-08-29",
-      "dateModified": "2026-08-29"
+      "dateModified": "2026-10-23"
     },
     {
       "@type": "FAQPage",
@@ -184,7 +184,7 @@
 
     <section class="explainer-hero">
       <div class="explainer-kicker">Explainer</div>
-      <h1 class="explainer-headline">What Are Pre-, In-, and Post-Processing Fairness Mitigations?</h1>
+      <h1 class="explainer-headline">Pre-, In-, and Post-Processing Fairness Mitigations</h1>
       <p class="explainer-lede">Where in the pipeline you intervene changes what a fairness fix can and can&#x27;t do.</p>
       <p class="explainer-lede">Learn the three families of fairness intervention - pre-processing, in-processing, and post-processing - through this repo&#x27;s own five-strategy benchmark ladder. Anchored to COMPAS&#x27;s real frozen progression (85.5% to 17.2% to 11.5% to -1.4% to 2.3% demographic parity gap), showing the three approaches converge rather than compound.</p>
     </section>
@@ -257,7 +257,7 @@ def summarize_mitigation_ladder(results_df, audit, metric, protected_attribute, 
 <h4 id="4-a-near-zero-gap-after-mitigation-isn-t-the-same-as-a-fair-model">4. A near-zero gap after mitigation isn&#x27;t the same as a fair model</h4>
 <p>S3 and S4 close the <em>measured</em> demographic parity gap, but neither one touches the underlying label quality, feature construction, or the fact that the model is being used for this decision at all. See <a href="label-bias.html">What Is Label Bias?</a>.</p>
 <h3 id="related-concepts">Related Concepts</h3>
-<ul><li><a href="fairness-through-unawareness.html">What Is Fairness Through Unawareness?</a> - the S1 strategy on its own, and why the 17.2-point residual gap above is the direct evidence against relying on it alone.</li><li><a href="demographic-parity.html">What Is Demographic Parity?</a> - the metric <code>ExponentiatedGradient</code>&#x27;s constraint directly targets in this repo&#x27;s S3 strategy.</li><li><a href="proxy-variables.html">Proxy Variables</a> - what S2&#x27;s proxy-removal step is actually trying to remove, and why it can never remove all of it.</li></ul>
+<ul><li><a href="fairness-through-unawareness.html">What Is Fairness Through Unawareness?</a> - the S1 strategy on its own, and why the 17.2-point residual gap above is the direct evidence against relying on it alone.</li><li><a href="demographic-parity.html">What Is Demographic Parity?</a> - the metric <code>ExponentiatedGradient</code>&#x27;s constraint directly targets in this repo&#x27;s S3 strategy.</li><li><a href="proxy-variables.html">Proxy Variables</a> - what S2&#x27;s proxy-removal step is actually trying to remove, and why it can never remove all of it.</li><li><a href="fairness-regularization.html">Fairness Regularization</a> - the penalty form of an in-processing method</li><li><a href="group-specific-thresholds.html">Group-Specific Thresholds</a> - the simplest post-processing rule</li><li><a href="reject-option-classification.html">Reject Option Classification</a> - post-processing near the decision boundary</li><li><a href="reweighing.html">Reweighing</a> - the pre-processing rung of the ladder</li></ul>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../faircode/strategies.py"><code>faircode/strategies.py</code></a> - the actual S0-S4 implementation this explainer describes.</li><li><a href="../index.html#project-compas"><code>COMPAS/</code></a> - the audit behind the five-strategy progression quoted above, and the one already cited on the project homepage.</li></ul>
 <h3 id="further-reading">Further Reading</h3>

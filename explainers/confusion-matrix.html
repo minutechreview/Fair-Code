@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>What Is a Confusion Matrix? · Fair Code</title>
-<meta name="description" content="Learn how a confusion matrix breaks down accuracy into true positives, true negatives, false positives, and false negatives, and why derived metrics like FPR and FNR are essential for detecting bias.">
+<meta name="description" content="How a confusion matrix splits accuracy into true and false positives and negatives, and why rates like FPR and FNR are essential for detecting bias.">
 <link rel="canonical" href="https://www.thefaircode.xyz/explainers/confusion-matrix.html">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
 <meta property="og:title" content="What Is a Confusion Matrix? · Fair Code">
-<meta property="og:description" content="Learn how a confusion matrix breaks down accuracy into true positives, true negatives, false positives, and false negatives, and why derived metrics like FPR and FNR are essential for detecting bias.">
+<meta property="og:description" content="How a confusion matrix splits accuracy into true and false positives and negatives, and why rates like FPR and FNR are essential for detecting bias.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://www.thefaircode.xyz/explainers/confusion-matrix.html">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og/confusion-matrix.png">
@@ -26,7 +26,7 @@
 <meta property="og:image:alt" content="What Is a Confusion Matrix? · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="What Is a Confusion Matrix? · Fair Code">
-<meta name="twitter:description" content="Learn how a confusion matrix breaks down accuracy into true positives, true negatives, false positives, and false negatives, and why derived metrics like FPR and FNR are essential for detecting bias.">
+<meta name="twitter:description" content="How a confusion matrix splits accuracy into true and false positives and negatives, and why rates like FPR and FNR are essential for detecting bias.">
 <meta name="twitter:image" content="https://www.thefaircode.xyz/assets/og/confusion-matrix.png">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-07-28",
-      "dateModified": "2026-07-28"
+      "dateModified": "2026-10-24"
     },
     {
       "@type": "FAQPage",
@@ -257,7 +257,7 @@ def group_confusion_metrics(df, y_true_col, y_pred_col, group_col):
 <h4 id="3-the-base-rate-problem">3. The Base Rate Problem</h4>
 <p>When two demographic groups have different base rates (prevalence) of the target variable in the dataset, it is mathematically impossible to equalize all metrics derived from the confusion matrix at the same time. You often have to choose between equalizing predictive value (calibration) and equalizing error rates (Equalized Odds).</p>
 <h3 id="related-concepts">Related Concepts</h3>
-<ul><li><a href="false-positives-vs-false-negatives.html">False Positives vs. False Negatives in Medical Risk Models</a> - a deep dive into why the two error types carry vastly different real-world costs.</li><li><a href="equalized-odds.html">Equalized Odds</a> - the fairness metric that demands equal False Positive and True Positive Rates across groups.</li><li><a href="predictive-parity.html">Predictive Parity</a> - the fairness metric that focuses on equal Positive Predictive Value (Precision).</li><li><a href="roc-curve-auc.html">What Is a ROC Curve and AUC?</a> - how to evaluate a model&#x27;s ranking ability across all possible thresholds, independent of a single confusion matrix.</li></ul>
+<ul><li><a href="false-positives-vs-false-negatives.html">False Positives vs. False Negatives in Medical Risk Models</a> - a deep dive into why the two error types carry vastly different real-world costs.</li><li><a href="equalized-odds.html">Equalized Odds</a> - the fairness metric that demands equal False Positive and True Positive Rates across groups.</li><li><a href="predictive-parity.html">Predictive Parity</a> - the fairness metric that focuses on equal Positive Predictive Value (Precision).</li><li><a href="roc-curve-auc.html">What Is a ROC Curve and AUC?</a> - how to evaluate a model&#x27;s ranking ability across all possible thresholds, independent of a single confusion matrix.</li><li><a href="cost-sensitive-evaluation.html">How Does Unequal Cost Change a Fairness Evaluation?</a> - expected cost per group when errors are not equally costly</li></ul>
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../index.html#project-compas"><code>COMPAS/</code></a> - the recidivism audit that highlights the conflict between equalizing Positive Predictive Value and equalizing False Positive Rates.</li><li><a href="../index.html#project-readmission"><code>Healthcare Readmission/</code></a> - an audit demonstrating how a model can maintain high overall accuracy while concentrating its False Negatives in a specific demographic group.</li></ul>
 <h3 id="further-reading">Further Reading</h3>

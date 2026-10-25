@@ -184,7 +184,7 @@ features = [
 
 ---
 
-## How to Inspect What a Network Learned
+## Detection Code: Inspecting What a Network Learned
 
 Neural networks are not fully interpretable, but you can probe them.
 
@@ -264,6 +264,16 @@ The architecture is not the problem. The weights are the problem. And the weight
 This is why the work in this repository matters: not to fix the math, but to fix the inputs. Remove the protected attributes. Audit every remaining feature for correlation with those attributes. Retrain. Measure the gap again.
 
 **A neural network will learn exactly what you teach it. The question is whether you're paying attention to what that is.**
+
+---
+
+## Limitations
+
+1. **An attribution is not a reason.** SHAP values show how much each input moved one prediction, computed under assumptions about feature independence. Different attribution methods can rank the same features differently, and none proves the network "used" a feature in a causal sense. See [SHAP Values](shap-values.md).
+2. **The weights say nothing about fairness by themselves.** Whether a network treats groups differently is only visible in its outputs by group, so every claim here needs a per-group evaluation with intervals. See [Disaggregated Evaluation](disaggregated-evaluation.md).
+3. **The audit numbers come from one split and one seed.** A different split moves the gaps, and small groups move them most. See [Permutation Tests for Fairness Gaps](permutation-test-fairness-gaps.md).
+4. **Removing the protected attribute does not stop a network learning it.** Any remaining feature correlated with it can carry the same signal. See [Proxy Variables](proxy-variables.md).
+5. **Small tabular data is not what networks are best at.** The audits here are a few thousand to a hundred thousand rows of mixed columns, where simpler models often match a network and are easier to inspect.
 
 ---
 

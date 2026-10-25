@@ -27,7 +27,7 @@ Fair Code is an open-source responsible AI platform explaining algorithmic bias,
 
 | Stars | Contributors | Forks | Watching | Social Reach | Countries | Audits | Explainers | CI |
 |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| 51 | 53 | 58 | 8 | 30K+ | 20 | 7 | 62 | ✅ every push/PR |
+| 53 | 55 | 64 | 8 | 30K+ | 20 | 7 | 108 | ✅ every push/PR |
 
 > The earlier paper freeze has lifted - the real paper, with fresh results, is now planned for next
 > year. `paper/results-frozen/` (tag `v1.0-paper`, commit `bbef2ba`) is kept as a reference snapshot.
@@ -45,7 +45,7 @@ Fair Code is an open-source responsible AI platform explaining algorithmic bias,
 
 ## Phase 1 - Bias Glossary and Beginner Explainers ✅
 
-**Status: Foundational library complete - 68 explainers published, past the original 60+ target and the 65+ goal, working toward 75+**
+**Status: Foundational library complete - 114 explainers published, past the original 60+ target and the 90+ goal, working toward 120+**
 
 Build the foundational vocabulary and explain core fairness concepts clearly enough for a non-technical reader.
 
@@ -94,6 +94,52 @@ Build the foundational vocabulary and explain core fairness concepts clearly eno
 - [x] What Is Reweighing?
 - [x] What Are Group-Specific Thresholds?
 - [x] What Is a Permutation Test for a Fairness Gap?
+- [x] What Is Adversarial Debiasing?
+- [x] What Is a Fairness Regularizer?
+- [x] What Is Fair Representation Learning?
+- [x] What Is Measurement Bias?
+- [x] What Is Aggregation Bias?
+- [x] What Is Survivorship Bias?
+- [x] What Is Disaggregated Evaluation?
+- [x] What Is Leave-One-Group-Out Evaluation?
+- [x] How Do You Choose a Fairness Metric?
+- [x] What Is a Model Card?
+- [x] What Is a Datasheet for a Dataset?
+- [x] What Is an Algorithmic Impact Assessment?
+- [x] How Do You Measure Fairness When the Protected Attribute Is Missing?
+- [x] What Is Fairness Without Demographics?
+- [x] Adverse Action Notices
+- [x] Geographic Proxies and Redlining
+- [x] Risk-Based Pricing Gaps
+- [x] Race in Clinical Models
+- [x] Utilization as a Label
+- [x] Discharge Leakage in Readmission Models
+- [x] Seed and Split Sensitivity
+- [x] Cross-Validation for Fairness
+- [x] Stratified Test Sets for Fairness
+- [x] Feature Importance by Group
+- [x] Partial Dependence by Group
+- [x] Explanation Disagreement
+- [x] Hiring Pipeline Adverse Impact
+- [x] Compounding Disparities
+- [x] Differential Validity
+- [x] Minimum Detectable Gap
+- [x] Small-Group Shrinkage
+- [x] Confidence Intervals for Ratios
+- [x] Monitoring Fairness in Production
+- [x] Label Shift and Fairness
+- [x] Delayed Feedback
+- [x] Causal Graphs for Fairness
+- [x] Path-Specific Effects
+- [x] Randomized Post-Processing
+- [x] Fairness-Accuracy Pareto Frontier
+- [x] Choosing a Mitigation Strategy
+- [x] What Is an AUC Gap Between Groups?
+- [x] What Is Decision Curve Analysis by Group?
+- [x] How Does Unequal Cost Change a Fairness Evaluation?
+- [x] What Is Popularity Bias?
+- [x] What Is Two-Sided Fairness in a Marketplace?
+- [x] How Does Position Bias Distort What a Ranking Learns?
 
 ---
 
@@ -202,8 +248,11 @@ Go deeper on measurement - fairness dashboards, interactive notebooks, and stati
 - [x] Input handling: `.xls` (#1018), binary files, JSON Lines, ragged rows, unterminated quotes, NUL bytes and JSON `NaN` (#1019, #1023-#1027)
 - [x] Reports and gates: `compare --fail-on-drift` with nothing to compare (#1017), long group labels (#1021), an empty proxy-hint result (#1022), blank reference shares (#1028), the em-dash check's file types (#1020) and labels that differ only in case (#1009)
 - [ ] Engine parity follow-ups: JSON strings `NA` and empty (#1036), XLSX dates (#1039), numeric and blank headers (#1045, #1046), long labels that still collide (#1038)
-- [ ] Scale and flags: quadratic flag building and tens of thousands of flags for a high-cardinality column in the profile and compare views (#1042, #1043, #1052)
-- [ ] MCP, CLI and docs follow-ups: `--fail-under` range (#1037), undocumented benchmark flags (#1040), unknown benchmark filters (#1041), proxy hints on one dimension (#1044), the citation version (#1047), stale benchmark and snapshot wording (#1048, #1049), workflow timeouts (#1050), the leaked workbook handle (#1051), subprocess coverage (#986) and the contributor notes for the new checks (#989)
+- [x] Scale and flags: quadratic flag building and tens of thousands of flags for a high-cardinality column in the profile and compare views (#1042, #1043, #1052)
+- [x] MCP, CLI and docs follow-ups: `--fail-under` range (#1037), undocumented benchmark flags (#1040), unknown benchmark filters (#1041), proxy hints on one dimension (#1044), the citation version (#1047), stale benchmark and snapshot wording (#1048, #1049), workflow timeouts (#1050), the leaked workbook handle (#1051), subprocess coverage (#986) and the contributor notes for the new checks (#989)
+- [x] Tooling and tests for the results workflow: `scripts/diff_results.py` (#1065) with `--audit` and `--summary` (#1081), `get_benchmark_results` with a `source` argument (#1049) and its README parameters (#1082), a public `load_audit()` helper (#1078), browser tests for the flag caps (#1080), an opt-in `benchmark-diff` workflow for lockfile bumps (#1079), grouped Dependabot updates (#1069), a check that README and `llms.txt` list every explainer (#1077), 1904-system XLSX dates (#1076), and the no-op `frozen-files` workflow removed (#1061)
+- [x] Metrics, SEO and test hardening: no `disparate_impact_ratio` when the advantaged group is almost never selected (#1094), page titles and meta descriptions within search limits (#1104, #1105), a Limitations section and two inbound links for every explainer (#1107, #1108), and the explainer build tested end to end (#1110)
+
 ---
 
 ## Phase 6 - Research Paper and Publication - Paused, Retargeted for Next Year
@@ -222,7 +271,7 @@ a fresh run of results.
 
 **Prerequisites that can start now** (nothing below waits for the submission date):
 
-- [ ] **Fresh full benchmark run on the current lockfile** - rerun `faircode benchmark` on `requirements-lock.txt` and refresh `results/` (tracked in [#1068](https://github.com/yakew7/Fair-Code/issues/1068)). This is the run the paper will be built on, so doing it early shows what moved.
+- [x] **Fresh full benchmark run on the current lockfile** - rerun `faircode benchmark` on `requirements-lock.txt` and refresh `results/` (tracked in [#1068](https://github.com/yakew7/Fair-Code/issues/1068)). This is the run the paper will be built on, so doing it early shows what moved.
 - [x] **Compare it with the earlier snapshot** - `python3 scripts/diff_results.py` lists every row that moved against `paper/results-frozen/`; explain each flagged row before it goes into a manuscript.
 - [x] **Decide how library bumps are handled** - Dependabot groups the harmless updates and keeps `numpy`, `pandas`, `scikit-learn`, `scipy`, `fairlearn` and `matplotlib` as one PR each, with a benchmark diff before merging (see [CONTRIBUTING.md](CONTRIBUTING.md#dependency-updates)).
 - [ ] **Choose the target venue** - a maintainer decision, to be written here. It sets the page limit, the artifact and reproducibility requirements, and the submission window, so it comes before any manuscript writing. Candidates to weigh are a fairness-and-accountability conference, a datasets-and-benchmarks track, or a journal.

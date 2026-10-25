@@ -3,30 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>What Is a Bootstrap Confidence Interval (and a Permutation Test)? · Fair Code</title>
-<meta name="description" content="Learn how bootstrap resampling estimates a confidence interval and a permutation test estimates a p-value for any fairness gap, and why both matter most on the small subgroups audits routinely hit. Contrasts two real frozen COMPAS results: a tight, clearly significant Equal Opportunity gap and a wide, inconclusive Predictive Parity gap measured from just 6 rows.">
+<title>Bootstrap Confidence Intervals and Permutation Tests · Fair Code</title>
+<meta name="description" content="How bootstrap resampling gives a confidence interval and a permutation test gives a p-value for any fairness gap, and why both matter on small subgroups.">
 <link rel="canonical" href="https://www.thefaircode.xyz/explainers/bootstrap-confidence-intervals.html">
 <meta name="author" content="Yash Kewlani">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:site_name" content="Fair Code">
 <meta property="og:locale" content="en_US">
-<meta property="og:title" content="What Is a Bootstrap Confidence Interval (and a Permutation Test)? · Fair Code">
-<meta property="og:description" content="Learn how bootstrap resampling estimates a confidence interval and a permutation test estimates a p-value for any fairness gap, and why both matter most on the small subgroups audits routinely hit. Contrasts two real frozen COMPAS results: a tight, clearly significant Equal Opportunity gap and a wide, inconclusive Predictive Parity gap measured from just 6 rows.">
+<meta property="og:title" content="Bootstrap Confidence Intervals and Permutation Tests · Fair Code">
+<meta property="og:description" content="How bootstrap resampling gives a confidence interval and a permutation test gives a p-value for any fairness gap, and why both matter on small subgroups.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://www.thefaircode.xyz/explainers/bootstrap-confidence-intervals.html">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og/bootstrap-confidence-intervals.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
-<meta property="og:image:alt" content="What Is a Bootstrap Confidence Interval (and a Permutation Test)? · Fair Code">
+<meta property="og:image:alt" content="Bootstrap Confidence Intervals and Permutation Tests · Fair Code">
 <meta property="og:image" content="https://www.thefaircode.xyz/assets/og-light/bootstrap-confidence-intervals.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
-<meta property="og:image:alt" content="What Is a Bootstrap Confidence Interval (and a Permutation Test)? · Fair Code (light)">
+<meta property="og:image:alt" content="Bootstrap Confidence Intervals and Permutation Tests · Fair Code (light)">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="What Is a Bootstrap Confidence Interval (and a Permutation Test)? · Fair Code">
-<meta name="twitter:description" content="Learn how bootstrap resampling estimates a confidence interval and a permutation test estimates a p-value for any fairness gap, and why both matter most on the small subgroups audits routinely hit. Contrasts two real frozen COMPAS results: a tight, clearly significant Equal Opportunity gap and a wide, inconclusive Predictive Parity gap measured from just 6 rows.">
+<meta name="twitter:title" content="Bootstrap Confidence Intervals and Permutation Tests · Fair Code">
+<meta name="twitter:description" content="How bootstrap resampling gives a confidence interval and a permutation test gives a p-value for any fairness gap, and why both matter on small subgroups.">
 <meta name="twitter:image" content="https://www.thefaircode.xyz/assets/og/bootstrap-confidence-intervals.png">
 
 <link rel="icon" href="/assets/icons/favicon.ico" sizes="any">
@@ -112,7 +112,7 @@
         "url": "https://www.thefaircode.xyz/index.html#explainers"
       },
       "datePublished": "2026-08-29",
-      "dateModified": "2026-09-19"
+      "dateModified": "2026-10-24"
     },
     {
       "@type": "FAQPage",
@@ -184,7 +184,7 @@
 
     <section class="explainer-hero">
       <div class="explainer-kicker">Explainer</div>
-      <h1 class="explainer-headline">What Is a Bootstrap Confidence Interval (and a Permutation Test)?</h1>
+      <h1 class="explainer-headline">Bootstrap Confidence Intervals and Permutation Tests</h1>
       <p class="explainer-lede">A fairness gap without an interval attached is a number, not a finding.</p>
       <p class="explainer-lede">Learn how bootstrap resampling estimates a confidence interval and a permutation test estimates a p-value for any fairness gap, and why both matter most on the small subgroups audits routinely hit. Contrasts two real frozen COMPAS results: a tight, clearly significant Equal Opportunity gap and a wide, inconclusive Predictive Parity gap measured from just 6 rows.</p>
     </section>
@@ -281,7 +281,7 @@ def bootstrap_ci_and_permutation_p(group_a, group_b, n_resamples=10000,
 <h3 id="related-projects-in-this-repo">Related Projects in This Repo</h3>
 <ul><li><a href="../faircode/significance.py"><code>faircode/significance.py</code></a> - the frozen implementation this explainer&#x27;s detection code mirrors independently.</li><li><a href="../index.html#project-compas"><code>COMPAS/</code></a> - the audit above, where the same model produces both a rock-solid and a completely inconclusive gap depending on which metric&#x27;s subgroup size you land on.</li></ul>
 <h3 id="further-reading">Further Reading</h3>
-<ul><li><a href="https://doi.org/10.1201/9780429246593" target="_blank" rel="noreferrer noopener">Efron, B., Tibshirani, R. (1993): <em>An Introduction to the Bootstrap</em></a> - the foundational reference for the bootstrap resampling method used here.</li><li><a href="https://doi.org/10.1007/b138696" target="_blank" rel="noreferrer noopener">Good, P. (2005): <em>Permutation, Parametric, and Bootstrap Tests of Hypotheses</em></a> - covers permutation testing as a distribution-free alternative to classical significance tests.</li><li><a href="https://doi.org/10.1198/016214506000000330" target="_blank" rel="noreferrer noopener">Ho, D. E., Imai, K. (2006): Randomization Inference With Natural Experiments</a> - a practical treatment of permutation-based inference outside a designed experiment, close to how audit data is actually collected.</li></ul>
+<ul><li><a href="https://doi.org/10.1201/9780429246593" target="_blank" rel="noreferrer noopener">Efron, B., Tibshirani, R. (1993): <em>An Introduction to the Bootstrap</em></a> - the foundational reference for the bootstrap resampling method used here.</li><li><a href="https://doi.org/10.1007/b138696" target="_blank" rel="noreferrer noopener">Good, P. (2005): <em>Permutation, Parametric, and Bootstrap Tests of Hypotheses</em></a> - covers permutation testing as a distribution-free alternative to classical significance tests.</li><li><a href="https://doi.org/10.1198/016214505000001258" target="_blank" rel="noreferrer noopener">Ho, D. E., Imai, K. (2006): Randomization Inference With Natural Experiments</a> - a practical treatment of permutation-based inference outside a designed experiment, close to how audit data is actually collected.</li></ul>
 <p><em>Part of <a href="https://instagram.com/thefaircodeproject" target="_blank" rel="noreferrer noopener">The Fair Code Project</a> - exposing and fixing algorithmic bias with real data and open code.</em></p></article>
   </main>
 

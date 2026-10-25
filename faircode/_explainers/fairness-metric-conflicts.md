@@ -136,7 +136,7 @@ ProPublica asked: *do false accusations fall equally?* Northpointe asked: *when 
 
 ---
 
-## The Impossibility Visualised
+## Detection Code: The Impossibility Visualised
 
 Imagine two groups with different base rates: Group A reoffends at 40%, Group B at 20%.
 
@@ -305,6 +305,12 @@ This is why choosing a metric is not sufficient. You must also audit the data th
 **Metric satisfaction does not prove fairness.** A model can satisfy demographic parity by systematically reducing outcomes for an advantaged group rather than improving them for a disadvantaged group. Parity in mediocrity is not justice. Always inspect absolute rates, not just gaps.
 
 **Intersectionality is not captured by pairwise audits.** Auditing by race and by gender separately misses discrimination against Black women specifically, or other intersecting identities. Pairwise metrics pass while intersectional disparities persist. True auditing requires disaggregating by all relevant combinations - which is why large, representative datasets are a prerequisite.
+
+---
+
+## Related Concepts
+
+* [Choosing a Fairness Metric](choosing-a-fairness-metric.md) - a decision path from the harm to the metric
 
 ---
 

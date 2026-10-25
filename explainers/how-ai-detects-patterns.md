@@ -10,7 +10,7 @@ Every audit in this repo runs on the same underlying mechanism: a Random Forest 
 
 The non-obvious part is this: pattern detection has no concept of "should." A Random Forest does not know that `CustodyStatus` reflects decades of over-policing rather than individual criminality. It only knows that `CustodyStatus` and `race` move together, and that both move together with the recidivism label. From the model's point of view, a proxy and a cause look identical - both are just columns with high feature importance.
 
-## How Pattern Detection Works
+## How the Pattern Search Works
 
 A Random Forest Classifier - the model used across every audit in this repo - detects patterns through three mechanisms working together.
 
@@ -142,6 +142,7 @@ A Random Forest treats `education.num` and `relationship` identically: both are 
 * [What Happens Inside a Neural Network?](neural-networks.md) - covers pattern detection in a different model family, where patterns are encoded as learned weights rather than tree splits.
 * [What Are SHAP Values?](shap-values.md) - a more granular way to inspect which patterns drove a single prediction, not just the model as a whole.
 * [What Is Proxy Entanglement?](proxy-entanglement.md) - what happens when a detected pattern is spread across multiple correlated features instead of concentrated in one.
+* [What Is Unsupervised Learning?](unsupervised-learning.md) - clustering as pattern detection
 
 ## Related Projects in This Repo
 

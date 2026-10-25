@@ -37,7 +37,7 @@ The benchmark's S2 baseline in `results/` (the current results) is the same mode
 
 ## Detection/Implementation Code
 
-Run from the repo root (`PYTHONPATH=. python3 thresholds.py`).
+Run from the repo root (`PYTHONPATH=. python3 explainers/code/group-specific-thresholds.py`; that file is generated from the block below).
 
 ```python
 import numpy as np
@@ -99,6 +99,7 @@ print(f"  disadvantaged-group threshold: {t_eo:.3f}")
 * [Demographic Parity](demographic-parity.md) - the criterion behind the first set
 * [Calibration](calibration.md) - what group-specific cutoffs give up
 * [Mitigation Strategies](mitigation-strategies.md) - S4 in the benchmark
+* [How Does Unequal Cost Change a Fairness Evaluation?](cost-sensitive-evaluation.md) - expected cost per group when errors are not equally costly
 
 ## Related Projects in This Repo
 
