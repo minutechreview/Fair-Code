@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Bootstrap Confidence Intervals and Permutation Tests</h1>
       <p class="explainer-lede">A fairness gap without an interval attached is a number, not a finding.</p>
@@ -203,12 +204,12 @@
 <p>Neither method assumes normality, a minimum sample size, or a particular metric - the same two functions apply identically whether the metric is a proportion, a rate difference, or a ratio.</p>
 <h3 id="concrete-example-compas-audit-01">Concrete Example: COMPAS - Audit 01</h3>
 <p>Two rows from the exact same audit and model show what a difference in sample size does to certainty, using frozen numbers straight from <code>paper/results-frozen/results_fairness.csv</code> (baseline logistic regression, race):</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Metric</th><th>Value</th><th>95% CI</th><th>p-value</th><th>n (disadv. / adv.)</th><th>Verdict</th></tr></thead><tbody><tr><td>Equal Opportunity Diff</td><td>0.926</td><td>[0.909, 0.942]</td><td>0.0</td><td>1,048 / 467</td><td>Clearly real</td></tr><tr><td>Predictive Parity Diff (random forest)</td><td>0.128</td><td>[-0.218, 0.475]</td><td>0.663</td><td>1,552 / 6</td><td>Cannot tell</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">95% CI</th><th scope="col">p-value</th><th scope="col">n (disadv. / adv.)</th><th scope="col">Verdict</th></tr></thead><tbody><tr><td>Equal Opportunity Diff</td><td>0.926</td><td>[0.909, 0.942]</td><td>0.0</td><td>1,048 / 467</td><td>Clearly real</td></tr><tr><td>Predictive Parity Diff (random forest)</td><td>0.128</td><td>[-0.218, 0.475]</td><td>0.663</td><td>1,552 / 6</td><td>Cannot tell</td></tr></tbody></table></div>
 <p>The first row has a huge effect and a tight interval - 1.7 percentage points wide, entirely on one side of zero, p essentially 0. There is no ambiguity: African-American defendants who did not reoffend were flagged as high-risk at a dramatically higher rate than Caucasian defendants who did not reoffend, and that conclusion would survive almost any resample.</p>
 <p>The second row, on the same audit, has a point estimate of 12.8 points - not small - but the confidence interval runs from -21.8 to +47.5, spanning zero by a wide margin, and the permutation p-value is 0.663 (not remotely significant). The reason is visible in the last column: only 6 Caucasian defendants had a positive prediction to measure predictive parity against. A gap computed from 6 people can point in almost any direction depending on which 6 people happened to be in the sample - <code>faircode/metrics.py</code>&#x27;s own <code>small_sample_warning</code> flag is <code>True</code> on this row for exactly that reason. Reporting the 12.8-point number alone, without the interval, would misrepresent a genuinely uncertain measurement as a finding.</p>
 <h3 id="detection-code">Detection Code</h3>
 <p>A minimal, from-scratch implementation of both methods, so the mechanics are visible directly on the page rather than hidden behind a library call - this mirrors <code>faircode/significance.py</code>&#x27;s approach independently rather than wrapping it.</p>
-<pre><code class="language-python">import numpy as np
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import numpy as np
 
 
 def bootstrap_ci_and_permutation_p(group_a, group_b, n_resamples=10000,

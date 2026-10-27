@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Demographic Parity</h1>
       <p class="explainer-lede">Equal positive rates across groups.</p>
@@ -202,23 +203,23 @@
 <p>But it also matters to understand what it <em>doesn&#x27;t</em> catch - because a model can satisfy demographic parity while still being deeply unfair in other ways. See the Limitations section.</p>
 <hr>
 <h3 id="the-formal-definition">The Formal Definition</h3>
-<pre><code>P(Ŷ = 1 | Group = A) = P(Ŷ = 1 | Group = B)</code></pre>
+<pre tabindex="0" aria-label="Scrollable code block"><code>P(Ŷ = 1 | Group = A) = P(Ŷ = 1 | Group = B)</code></pre>
 <p>The model&#x27;s positive prediction rate must be equal across groups. That&#x27;s it. The metric makes no claim about whether the predictions are correct - only that the <em>rate</em> of positive predictions is equalised.</p>
 <p>In practice, you rarely demand perfect equality. The EEOC&#x27;s <strong>four-fifths rule</strong> treats any selection rate below 80% of the highest group&#x27;s rate as evidence of adverse impact:</p>
-<pre><code>P(Ŷ = 1 | Group = B) / P(Ŷ = 1 | Group = A) ≥ 0.80</code></pre>
+<pre tabindex="0" aria-label="Scrollable code block"><code>P(Ŷ = 1 | Group = B) / P(Ŷ = 1 | Group = A) ≥ 0.80</code></pre>
 <p>A ratio below 0.80 triggers scrutiny. A ratio above 0.80 passes. The 80% threshold is a legal convention, not a mathematical optimum.</p>
 <hr>
 <h3 id="real-world-proof-hiring-bias">Real-World Proof: Hiring Bias</h3>
 <p>The AI Fair Recruitment audit in this repo is a direct illustration of a demographic parity violation - and its fix.</p>
 <p>A model trained with gender and age as features assigned hire recommendations at sharply different rates:</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Group</th><th>Hire Rate</th></tr></thead><tbody><tr><td>Male applicants</td><td>21.62%</td></tr><tr><td>Female applicants</td><td>17.59%</td></tr><tr><td><strong>Fairness Gap</strong></td><td><strong>4.03 percentage points</strong></td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Group</th><th scope="col">Hire Rate</th></tr></thead><tbody><tr><td>Male applicants</td><td>21.62%</td></tr><tr><td>Female applicants</td><td>17.59%</td></tr><tr><td><strong>Fairness Gap</strong></td><td><strong>4.03 percentage points</strong></td></tr></tbody></table></div>
 <p>(The disparate-impact ratio here is 17.59 / 21.62 = 0.81, just above the 0.80 four-fifths threshold - close enough that it&#x27;s worth checking directly rather than assuming a pass.)</p>
 <p>The model was not told to discriminate. It learned to - by treating gender as a direct signal, since it was fed to the model as a feature. <code>AI Fair Recruitment/audit.yaml</code> also lists <code>Age</code> as a declared proxy feature to remove alongside gender, but in this dataset Age is not actually correlated with Gender (point-biserial r ≈ -0.002, p ≈ 0.42 - not significant, and dropping only Gender while keeping Age already closes the gap to about 0.2 percentage points, nearly as small as the fully-fixed model below). The gap here was overwhelmingly about gender being visible to the model directly, not about a career-gap-driven age proxy.</p>
 <p>After dropping gender and age (the protected attribute and the declared proxy), the gap closes to <strong>0.16 percentage points</strong> - a <strong>96.1% reduction</strong>. The gap wasn&#x27;t in the underlying merit of candidates - it was in which features the model was permitted to see.</p>
 <hr>
 <h3 id="detection-code">Detection Code</h3>
 <h4 id="measure-demographic-parity-gap">Measure demographic parity gap</h4>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 
 def demographic_parity_audit(df, prediction_col, group_col, positive_label=1):
     &quot;&quot;&quot;
@@ -253,7 +254,7 @@ def demographic_parity_audit(df, prediction_col, group_col, positive_label=1):
 # df[&#x27;predicted_hire&#x27;] = model.predict(X_test)  # substitute your trained model and its X_test
 # demographic_parity_audit(df, prediction_col=&#x27;predicted_hire&#x27;, group_col=&#x27;Gender&#x27;)</code></pre>
 <h4 id="compute-across-multiple-protected-attributes-at-once">Compute across multiple protected attributes at once</h4>
-<pre><code class="language-python">def multi_group_parity_audit(y_pred, groups_df, positive_label=1):
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">def multi_group_parity_audit(y_pred, groups_df, positive_label=1):
     &quot;&quot;&quot;
     Run demographic parity audit for every column in groups_df simultaneously.
     Useful when auditing for race, gender, and age in a single pass.
@@ -281,7 +282,7 @@ def demographic_parity_audit(df, prediction_col, group_col, positive_label=1):
 #     status = &#x27;✓&#x27; if result[&#x27;passes_eeoc&#x27;] else &#x27;✗&#x27;
 #     print(f&quot;{attr}: gap={result[&#x27;gap&#x27;]:.4f}, 4/5 ratio={result[&#x27;four_fifths_ratio&#x27;]:.4f} {status}&quot;)</code></pre>
 <h4 id="visualise-the-gap">Visualise the gap</h4>
-<pre><code class="language-python">import matplotlib.pyplot as plt
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import matplotlib.pyplot as plt
 
 def plot_parity_gap(rates_df, group_col, rate_col=&#x27;positive_rate&#x27;, title=&#x27;Demographic Parity&#x27;):
     fig, ax = plt.subplots(figsize=(8, 4))

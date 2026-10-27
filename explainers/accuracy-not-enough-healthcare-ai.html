@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Why Accuracy Is Not Enough in Healthcare AI</h1>
       <p class="explainer-lede">A 95% accurate model can still miss the sickest patients in one group.</p>
@@ -198,12 +199,12 @@
 <p>This is why a fairness or safety audit that stops at accuracy is not an audit at all. The questions that matter - <em>who does the model miss, and how often, in which group</em> - live in per-group recall, false-negative rates, and calibration, not in the headline score.</p>
 <h3 id="the-accuracy-paradox">The Accuracy Paradox</h3>
 <p>The accuracy paradox is the point where high accuracy and low usefulness meet: the rarer the event, the easier it is to score well by ignoring it.</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Model on a 3%-readmission population</th><th>Accuracy</th><th>Readmitted patients caught</th></tr></thead><tbody><tr><td>Predicts &quot;no readmission&quot; for everyone</td><td>97%</td><td>0 of every 100 at-risk patients</td></tr><tr><td>Flags the genuinely high-risk 3%</td><td>lower than 97%</td><td>most of them</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Model on a 3%-readmission population</th><th scope="col">Accuracy</th><th scope="col">Readmitted patients caught</th></tr></thead><tbody><tr><td>Predicts &quot;no readmission&quot; for everyone</td><td>97%</td><td>0 of every 100 at-risk patients</td></tr><tr><td>Flags the genuinely high-risk 3%</td><td>lower than 97%</td><td>most of them</td></tr></tbody></table></div>
 <p>The &quot;predict nothing&quot; model wins on accuracy and loses on the only thing that matters. A useful clinical model often <em>accepts</em> a worse accuracy score on purpose - it takes on more false positives to stop missing true cases. Which means accuracy going <strong>down</strong> can be the sign of a <strong>better</strong> model, and a fairness gap can hide entirely inside a flat accuracy number: the same 95% can be 95% for one group and 95% for another while the false negatives are concentrated in whichever group the training data under-represented.</p>
 <h3 id="concrete-example-healthcare-readmission-audit-06">Concrete Example: Healthcare Readmission - Audit 06</h3>
 <p>Audit 06 in this repo predicts 30-day hospital readmission from the Diabetes 130-US Hospitals dataset (101,766 records), with race and age as protected attributes. Readmission is a <strong>rare, imbalanced</strong> outcome - the baseline models flag only a tiny fraction of patients as high risk - so accuracy on this task is high almost by construction, and it is exactly the wrong number to trust.</p>
 <p>Dropping the protected attributes and their proxies moved the audit&#x27;s demographic-parity gaps in different directions per attribute (race 0.01% → 0.06%, actually widening; age 0.31% → 0.06%, an ~80% reduction) - those describe how <em>often</em> each group is flagged. They say nothing about whether the model&#x27;s <em>misses</em> fall evenly. A model can post identical accuracy for two groups and still miss the sicker patients in one of them - which is precisely what a group-by-group accuracy-vs-recall breakdown, not the headline score, is built to reveal:</p>
-<pre><code class="language-python">group_accuracy_vs_recall(readmission_df, y_true_col=&quot;readmitted&quot;,
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">group_accuracy_vs_recall(readmission_df, y_true_col=&quot;readmitted&quot;,
                          y_pred_col=&quot;predicted_high_risk&quot;, group_col=&quot;race&quot;)
 #         accuracy  recall  n
 # White       0.94    0.71  86527
@@ -213,7 +214,7 @@
 <p>This pattern is not hypothetical. Obermeyer et al. (2019) found a commercial risk algorithm used on millions of patients assigned Black and White patients the same risk score at the same predicted cost, but at that shared score the Black patients were considerably sicker - the model was systematically under-flagging them. No accuracy metric surfaced it; a group-stratified analysis of who got missed did.</p>
 <h3 id="detection-code">Detection Code</h3>
 <p>Computes accuracy alongside recall (sensitivity) and the false-negative rate <strong>per group</strong>, so a subgroup the model quietly under-serves cannot hide inside a high aggregate accuracy.</p>
-<pre><code class="language-python">import numpy as np
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import numpy as np
 import pandas as pd
 from sklearn.metrics import confusion_matrix
 

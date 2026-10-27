@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Confounding Variable</h1>
       <p class="explainer-lede">When a hidden cause makes two things look connected.</p>
@@ -203,31 +204,31 @@
 <hr>
 <h3 id="confounders-vs-proxy-variables-the-key-distinction">Confounders vs. Proxy Variables: The Key Distinction</h3>
 <p>These two concepts are routinely conflated. They are not the same.</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th></th><th>Proxy Variable</th><th>Confounding Variable</th></tr></thead><tbody><tr><td><strong>Mechanism</strong></td><td>Encodes the protected attribute as a feature</td><td>Independently causes both the feature and the outcome</td></tr><tr><td><strong>Causal direction</strong></td><td>Protected attribute → proxy → prediction</td><td>Confounder → feature AND confounder → outcome</td></tr><tr><td><strong>Fix</strong></td><td>Remove the proxy</td><td>Remove or statistically adjust for the confounder</td></tr><tr><td><strong>Example in this repo</strong></td><td><code>zip_code</code> encodes race</td><td>Over-policing causes elevated <code>CustodyStatus</code> AND inflated recidivism labels for Black defendants</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col"></th><th scope="col">Proxy Variable</th><th scope="col">Confounding Variable</th></tr></thead><tbody><tr><td><strong>Mechanism</strong></td><td>Encodes the protected attribute as a feature</td><td>Independently causes both the feature and the outcome</td></tr><tr><td><strong>Causal direction</strong></td><td>Protected attribute → proxy → prediction</td><td>Confounder → feature AND confounder → outcome</td></tr><tr><td><strong>Fix</strong></td><td>Remove the proxy</td><td>Remove or statistically adjust for the confounder</td></tr><tr><td><strong>Example in this repo</strong></td><td><code>zip_code</code> encodes race</td><td>Over-policing causes elevated <code>CustodyStatus</code> AND inflated recidivism labels for Black defendants</td></tr></tbody></table></div>
 <p>A proxy smuggles the protected attribute into the model through a correlated feature. A confounder creates a real statistical association between a feature and an outcome - but one that is entirely or partly driven by a third variable, not by the feature itself.</p>
 <p>In practice, the same variable often plays both roles simultaneously. <code>CustodyStatus</code> in COMPAS is a proxy (it correlates with race) and a confounder (over-policing independently elevated custody records and generated more surveillance-driven recidivism labels). Treating it as only one or the other misses half the problem.</p>
 <hr>
 <h3 id="concrete-example-compas-and-custodystatus">Concrete Example: COMPAS and CustodyStatus</h3>
 <p>The COMPAS audit in this repo trains a Random Forest to predict recidivism. The biased model&#x27;s Black/White fairness gap - the percentage-point difference in defendants flagged as high risk - is <strong>86.77%</strong>.</p>
 <p>The standard naive fix is to drop <code>race</code>:</p>
-<pre><code class="language-python"># unfair.py: features include race + CustodyStatus + priors_count + charge_degree + age
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python"># unfair.py: features include race + CustodyStatus + priors_count + charge_degree + age
 # Black/White fairness gap: 86.77%
 
 # Drop race only, retrain:
 features_no_race = [&#x27;age&#x27;, &#x27;priors_count&#x27;, &#x27;CustodyStatus&#x27;, &#x27;charge_degree&#x27;]
 # Black/White fairness gap: still ~84% - dropping race alone changes almost nothing</code></pre>
 <p>The reason: <code>race</code> was not the direct driver. The confounding path runs through <code>CustodyStatus</code>:</p>
-<pre><code>Over-policing (systemic) ──→ CustodyStatus (elevated for Black defendants)
+<pre tabindex="0" aria-label="Scrollable code block"><code>Over-policing (systemic) ──→ CustodyStatus (elevated for Black defendants)
                          ──→ Recidivism label (inflated by differential surveillance)</code></pre>
 <p>Both arrows are caused by the same systemic factor. <code>CustodyStatus</code> is associated with the recidivism label not because custody history is a reliable individual risk signal, but because the same structural forces that produce elevated custody records also produce more recidivism label events - through monitoring, not through behavior.</p>
 <p>Removing both <code>race</code> and <code>CustodyStatus</code> breaks this path:</p>
-<pre><code class="language-python"># fair.py: features include only priors_count + charge_degree + age
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python"># fair.py: features include only priors_count + charge_degree + age
 # Black/White fairness gap: 15.69% - 82% reduction</code></pre>
 <p>The residual 15.69% reflects other confounding paths (differential bail rates, charge severity distributions, surveillance-driven label noise) that require changes upstream of the model to eliminate entirely.</p>
 <hr>
 <h3 id="detection-code">Detection Code</h3>
 <p>The standard statistical approach is stratified analysis: check whether the association between a feature and the outcome disappears or reverses within strata of the confounder. A marginal association that weakens substantially after stratification is the signature of confounding - known in extreme cases as Simpson&#x27;s Paradox.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 from scipy.stats import chi2_contingency
 
 
@@ -288,7 +289,7 @@ def check_confounding(df, feature_col, outcome_col, confounder_col, protected_co
 
     return results</code></pre>
 <h4 id="applying-it-to-the-compas-audit">Applying it to the COMPAS audit</h4>
-<pre><code class="language-python"># Load the COMPAS dataset and generate predictions from unfair.py
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python"># Load the COMPAS dataset and generate predictions from unfair.py
 # (compas-scores-raw.csv has no raw `race` column - race_binary is derived
 # from Ethnic_Code_Text, exactly as unfair.py does)
 result = check_confounding(

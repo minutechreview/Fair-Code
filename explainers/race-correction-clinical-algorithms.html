@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Race Correction in Clinical Algorithms</h1>
       <p class="explainer-lede">Why race-adjusted clinical formulas bake bias directly into the math.</p>
@@ -218,12 +219,12 @@
 <h3 id="concrete-example-egfr-diagnostic-shift-audit">Concrete Example: eGFR Diagnostic Shift Audit</h3>
 <p>To understand how a race multiplier shifts patients across clinical thresholds, consider a sample of 1,000 Black patients presenting with elevated serum creatinine (1.3 to 1.8 mg/dL).</p>
 <p>When evaluated using the 2009 CKD-EPI equation, applying the 1.212 Black race multiplier inflates eGFR scores across the diagnostic boundary (60 mL/min/1.73m²):</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Metric</th><th>Without Race Multiplier (Unadjusted)</th><th>With 1.212 Race Multiplier (Race-Corrected)</th><th>Impact of Race Correction</th></tr></thead><tbody><tr><td>Average eGFR Score</td><td>53.4 mL/min/1.73m²</td><td>64.7 mL/min/1.73m²</td><td>Inflated by +11.3 mL/min/1.73m²</td></tr><tr><td>Classified as CKD (eGFR &lt; 60)</td><td>640 patients (64.0%)</td><td>410 patients (41.0%)</td><td><strong>230 patients (23.0%) denied CKD diagnosis</strong></td></tr><tr><td>Eligible for Transplant List (eGFR &lt; 20)</td><td>85 patients (8.5%)</td><td>42 patients (4.2%)</td><td><strong>43 patients (4.3%) delayed from transplant list</strong></td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Metric</th><th scope="col">Without Race Multiplier (Unadjusted)</th><th scope="col">With 1.212 Race Multiplier (Race-Corrected)</th><th scope="col">Impact of Race Correction</th></tr></thead><tbody><tr><td>Average eGFR Score</td><td>53.4 mL/min/1.73m²</td><td>64.7 mL/min/1.73m²</td><td>Inflated by +11.3 mL/min/1.73m²</td></tr><tr><td>Classified as CKD (eGFR &lt; 60)</td><td>640 patients (64.0%)</td><td>410 patients (41.0%)</td><td><strong>230 patients (23.0%) denied CKD diagnosis</strong></td></tr><tr><td>Eligible for Transplant List (eGFR &lt; 20)</td><td>85 patients (8.5%)</td><td>42 patients (4.2%)</td><td><strong>43 patients (4.3%) delayed from transplant list</strong></td></tr></tbody></table></div>
 <p>The race multiplier hides real kidney impairment in 23% of patients, treating them as healthy on paper while their kidney function declines.</p>
 <h3 id="detection-code">Detection Code</h3>
 <p>Below are two modular Python functions:</p>
 <ol><li><code>audit_race_corrected_formula</code>: Audits clinical datasets for diagnostic reclassification and care delays caused by race multipliers.</li><li><code>scan_for_explicit_race_coefficients</code>: Scans model feature lists or code for hardcoded racial multipliers or race-based dummy variables.</li></ol>
-<pre><code class="language-python">import numpy as np
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import numpy as np
 import pandas as pd
 
 

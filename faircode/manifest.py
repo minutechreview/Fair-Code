@@ -201,10 +201,27 @@ class Manifest:
     def from_dict(cls, data: dict, manifest_path: Path) -> "Manifest":
         audit_dir = manifest_path.parent
         row_filters = [RowFilter(**rf) for rf in data.get("row_filters", [])]
+        if "target" not in data:
+            raise ValueError("manifest is missing required 'target' section; add it to audit.yaml")
         target = TargetSpec(**data["target"])
+        if "protected_attributes" not in data:
+            raise ValueError("manifest is missing required 'protected_attributes' list; add it to audit.yaml")
         protected = [ProtectedAttribute(**pa) for pa in data["protected_attributes"]]
         if not protected:
             raise ValueError(f"{manifest_path}: protected_attributes must have at least one entry")
+        required = {
+            "name": "name field",
+            "dataset": "'dataset' section",
+            "core_features": "'core_features' list",
+        }
+        missing = [description for key, description in required.items() if key not in data]
+        if missing:
+            raise ValueError(
+                "manifest is missing required " + ", ".join(missing)
+                + f"; add {'them' if len(missing) > 1 else 'it'} to audit.yaml"
+            )
+        if not isinstance(data["dataset"], dict) or "path" not in data["dataset"]:
+            raise ValueError("manifest dataset section is missing required 'path'; add it to audit.yaml")
         return cls(
             name=data["name"],
             title=data.get("title", data["name"]),
@@ -224,6 +241,13 @@ def load_manifest(path) -> Manifest:
     path = Path(path)
     with open(path) as f:
         data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        # An empty file parses to None, and a file passed by mistake (a CSV,
+        # say) to a string; both used to die inside data.get() (#1177).
+        raise ValueError(
+            f"{path}: the manifest must be a mapping of keys to values, "
+            f"got {type(data).__name__}"
+        )
     return Manifest.from_dict(data, path)
 
 

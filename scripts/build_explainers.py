@@ -194,7 +194,7 @@ def render_markdown(markdown_text, known_slugs):
         nonlocal code_lines, code_lang
         if code_lines:
             lang_attr = f' class="language-{escape_html(code_lang)}"' if code_lang else ""
-            blocks.append(f"<pre><code{lang_attr}>{escape_html(chr(10).join(code_lines))}</code></pre>")
+            blocks.append(f'<pre tabindex="0" aria-label="Scrollable code block"><code{lang_attr}>{escape_html(chr(10).join(code_lines))}</code></pre>')
             code_lines = []
             code_lang = ""
 
@@ -218,7 +218,7 @@ def render_markdown(markdown_text, known_slugs):
             flush_list()
             flush_quote()
             headers, body_rows, next_index = table
-            header_html = "".join(f"<th>{inline_markdown(cell, known_slugs)}</th>" for cell in headers)
+            header_html = "".join(f'<th scope="col">{inline_markdown(cell, known_slugs)}</th>' for cell in headers)
             body_html = "".join(
                 "<tr>" + "".join(f"<td>{inline_markdown(cell, known_slugs)}</td>" for cell in row) + "</tr>"
                 for row in body_rows
@@ -425,6 +425,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -434,7 +435,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">{title}</h1>
       <p class="explainer-lede">{subtitle}</p>

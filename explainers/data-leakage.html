@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">What Is Data Leakage?</h1>
       <p class="explainer-lede">When the model has already seen the answer sheet.</p>
@@ -200,7 +201,7 @@
 <h3 id="two-kinds-of-leakage">Two Kinds of Leakage</h3>
 <h4 id="target-leakage">Target Leakage</h4>
 <p>Target leakage occurs when a feature used for training carries information that is only known <em>because</em> the outcome has already happened. The feature arrives after the label in the real world, but it is present in the training data alongside that label.</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Domain</th><th>Leaking Feature</th><th>Why It Is Leakage</th></tr></thead><tbody><tr><td>Credit default</td><td>Account closure flag</td><td>Account is closed <em>because</em> the borrower defaulted, not before</td></tr><tr><td>Healthcare readmission</td><td>Discharge prescription count</td><td>Prescribed on discharge, after the readmission decision would need to be made at admission</td></tr><tr><td>Criminal justice</td><td>Post-arrest charge count</td><td>Filed after the arrest the model is predicting</td></tr><tr><td>Insurance denial</td><td>Claim filed within 30 days</td><td>Claim exists because the denial outcome is already known</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Domain</th><th scope="col">Leaking Feature</th><th scope="col">Why It Is Leakage</th></tr></thead><tbody><tr><td>Credit default</td><td>Account closure flag</td><td>Account is closed <em>because</em> the borrower defaulted, not before</td></tr><tr><td>Healthcare readmission</td><td>Discharge prescription count</td><td>Prescribed on discharge, after the readmission decision would need to be made at admission</td></tr><tr><td>Criminal justice</td><td>Post-arrest charge count</td><td>Filed after the arrest the model is predicting</td></tr><tr><td>Insurance denial</td><td>Claim filed within 30 days</td><td>Claim exists because the denial outcome is already known</td></tr></tbody></table></div>
 <p>The model learns to predict the outcome by detecting its own effects. Remove those features at deployment and performance collapses.</p>
 <h4 id="train-test-contamination">Train-Test Contamination</h4>
 <p>Train-test contamination occurs when information from the test set leaks into the training process before the model is evaluated. The most common forms:</p>
@@ -211,7 +212,7 @@
 <p>The COMPAS audit in this repository demonstrates a proxy form of target leakage. <code>CustodyStatus</code> - a feature describing whether a defendant is currently in custody - correlates with race at p &lt; 0.001 and with the recidivism label at p &lt; 0.001. It is not a neutral operational variable. It encodes the outcome of a prior criminal justice interaction, which itself encodes historical over-policing of Black communities. Including it in the model achieves an 86.77% Black/White fairness gap in positive prediction rates.</p>
 <p>This is the structural form of leakage: a feature that looks like a legitimate input but whose predictive power comes from downstream effects of the very outcome being predicted.</p>
 <p>Removing <code>CustodyStatus</code> alongside the protected race attribute reduces the gap to 15.69% - an 82% reduction.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
@@ -239,12 +240,12 @@ for label, feats in [(&quot;With leakage (race + CustodyStatus)&quot;, FEATURES_
     print(f&quot;{label}: Black flagged {black_rate:.2%}, White flagged {white_rate:.2%}, &quot;
           f&quot;gap {black_rate - white_rate:.2%}&quot;)</code></pre>
 <p><strong>Actual output:</strong></p>
-<pre><code>With leakage (race + CustodyStatus): Black flagged 87.16%, White flagged 0.40%, gap 86.77%
+<pre tabindex="0" aria-label="Scrollable code block"><code>With leakage (race + CustodyStatus): Black flagged 87.16%, White flagged 0.40%, gap 86.77%
 Without leakage: Black flagged 84.71%, White flagged 69.02%, gap 15.69%</code></pre>
 <p>The leaked model&#x27;s fairness gap is inflated by the leaking feature; removing <code>CustodyStatus</code> alongside <code>race_binary</code> cuts the gap by 82% (matching <code>COMPAS/unfair.py</code>/<code>COMPAS/fair.py</code> exactly, since this <em>is</em> that same recipe). The residual 15.69% gap - discussed further in <a href="ml-bias.html">What Is Machine Learning Bias?</a> - shows leakage removal narrows a gap but doesn&#x27;t always close it.</p>
 <hr>
 <h3 id="detection-code">Detection Code</h3>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 import numpy as np
 from scipy.stats import pointbiserialr, chi2_contingency
 from sklearn.model_selection import train_test_split

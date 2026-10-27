@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Model Cards</h1>
       <p class="explainer-lede">A short, standard disclosure of what a model is for and who it fails.</p>
@@ -201,7 +202,7 @@
 <p>The strongest habit is generating the numeric sections from the audit&#x27;s output instead of typing them, so the card cannot disagree with the results.</p>
 <h3 id="concrete-example-benefits-denial">Concrete Example: Benefits Denial</h3>
 <p>This card is generated, not hand-written: the numbers are read straight from the benchmark&#x27;s <code>results/</code> (the current results) for the S2 logistic regression on <a href="../index.html#project-benefits">Benefits Denial</a>.</p>
-<pre><code># Model card: logistic_regression on benefits_denial (strategy unawareness_proxy_removal)
+<pre tabindex="0" aria-label="Scrollable code block"><code># Model card: logistic_regression on benefits_denial (strategy unawareness_proxy_removal)
 
 ## Intended use
 A benchmark model that predicts whether income is above $50K, framed as a means-test proxy for benefits
@@ -228,7 +229,7 @@ UCI Adult Census Income, features: the audit&#x27;s core columns only (no protec
 <p>What the card shows that the accuracy alone does not: accuracy is 0.811, but sex and race have significant parity gaps (-0.051 and -0.042), the age gap (+0.028) is significant in the other direction, and national origin is not significant at all.</p>
 <h3 id="detection-implementation-code">Detection/Implementation Code</h3>
 <p>Run from the repo root (<code>PYTHONPATH=. python3 explainers/code/model-cards.py</code>; that file is generated from the block below). It reads the benchmark&#x27;s current results; change the three constants at the top to document another model.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 
 AUDIT, STRATEGY, MODEL = &quot;benefits_denial&quot;, &quot;unawareness_proxy_removal&quot;, &quot;logistic_regression&quot;
 fair = pd.read_csv(&quot;results/results_fairness.csv&quot;)          # the benchmark&#x27;s current results

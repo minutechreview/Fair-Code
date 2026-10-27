@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Why Medical Imaging Models Fail Some Groups</h1>
       <p class="explainer-lede">A model trained mostly on one group&#x27;s images has barely seen the others.</p>
@@ -206,7 +207,7 @@
 <p>Both papers make the same point from different mechanisms: an aggregate accuracy or AUC computed on a test set drawn from the same skewed source as the training data cannot detect either failure. Detecting them requires a per-group breakdown and, for the shortcut case, testing on data collected somewhere the shortcut wasn&#x27;t present.</p>
 <h3 id="detection-code">Detection Code</h3>
 <p>Two checks that a single aggregate AUC hides: a per-group performance gap, and a proxy check for whether a non-clinical variable (site, device) is entangled with the label closely enough to be a plausible shortcut.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 from sklearn.metrics import roc_auc_score
 from scipy.stats import chi2_contingency
 

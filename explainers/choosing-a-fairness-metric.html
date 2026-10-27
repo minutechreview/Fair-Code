@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Choosing a Fairness Metric</h1>
       <p class="explainer-lede">Start from the harm, not from the formula.</p>
@@ -197,11 +198,11 @@
 <p>That makes the choice consequential. Pick afterwards and you can find a metric that says what you hoped. The benchmark&#x27;s own results show how often they diverge.</p>
 <h3 id="core-concept-start-from-the-harm">Core Concept: Start From the Harm</h3>
 <p>Work backwards from what goes wrong for a person:</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>The harm</th><th>Who it hits</th><th>The question</th><th>Start with</th></tr></thead><tbody><tr><td>Not selected when you should have been</td><td>Qualified people in one group</td><td>Are qualified people accepted at the same rate?</td><td><a href="equal-opportunity.html">Equal Opportunity</a></td></tr><tr><td>Wrongly flagged or denied</td><td>People who would have been fine</td><td>Are false flags equally common?</td><td>False positive rate, in <a href="equalized-odds.html">Equalized Odds</a></td></tr><tr><td>Unequal access to a benefit</td><td>Everyone in a group</td><td>Are groups selected at the same rate?</td><td><a href="demographic-parity.html">Demographic Parity</a> and <a href="disparate-impact.html">Disparate Impact</a></td></tr><tr><td>A score that means different things</td><td>People relying on the score</td><td>Does a positive predict the outcome equally?</td><td><a href="predictive-parity.html">Predictive Parity</a> and <a href="calibration.html">Calibration</a></td></tr><tr><td>One group is simply worse served</td><td>The worst-off group</td><td>How well off is the worst group?</td><td><a href="maxmin-fairness.html">Max-Min (Rawlsian) Fairness</a></td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">The harm</th><th scope="col">Who it hits</th><th scope="col">The question</th><th scope="col">Start with</th></tr></thead><tbody><tr><td>Not selected when you should have been</td><td>Qualified people in one group</td><td>Are qualified people accepted at the same rate?</td><td><a href="equal-opportunity.html">Equal Opportunity</a></td></tr><tr><td>Wrongly flagged or denied</td><td>People who would have been fine</td><td>Are false flags equally common?</td><td>False positive rate, in <a href="equalized-odds.html">Equalized Odds</a></td></tr><tr><td>Unequal access to a benefit</td><td>Everyone in a group</td><td>Are groups selected at the same rate?</td><td><a href="demographic-parity.html">Demographic Parity</a> and <a href="disparate-impact.html">Disparate Impact</a></td></tr><tr><td>A score that means different things</td><td>People relying on the score</td><td>Does a positive predict the outcome equally?</td><td><a href="predictive-parity.html">Predictive Parity</a> and <a href="calibration.html">Calibration</a></td></tr><tr><td>One group is simply worse served</td><td>The worst-off group</td><td>How well off is the worst group?</td><td><a href="maxmin-fairness.html">Max-Min (Rawlsian) Fairness</a></td></tr></tbody></table></div>
 <p>Then check the standard you are held to (a legal threshold such as the 80% rule, a regulator&#x27;s named metric), and what the label means: if the label is itself biased (<a href="label-bias.html">Label Bias</a>), the error-rate metrics inherit it and demographic parity may be the safer reading.</p>
 <h3 id="concrete-example-the-benchmark-s-own-results">Concrete Example: The Benchmark&#x27;s Own Results</h3>
 <p>For every audit and protected attribute, take the benchmark&#x27;s S2 model (logistic regression, no protected column, no proxies) in <code>results/</code> (the current results) and list which of the six metrics are significant. If the metrics agreed, each row would be all or nothing.</p>
-<pre><code>audit                    attribute        flagged  which metrics are significant
+<pre tabindex="0" aria-label="Scrollable code block"><code>audit                    attribute        flagged  which metrics are significant
 ai_fair_recruitment      gender           1/6     accuracy_equality
 benefits_denial          age              3/6     accuracy_equality, demographic_parity, disparate_impact_ratio
 benefits_denial          national_origin  1/6     accuracy_equality
@@ -222,7 +223,7 @@ tenant_screening         race             4/6     demographic_parity, disparate_
 <ul><li><strong>Tenant Screening (a flag leads to refusal):</strong> the harm is a wrongful flag, so start with the false positive rate and equalized odds, then check demographic parity.</li><li><strong>Benefits Denial (a means test):</strong> the harm is wrongly excluding eligible people, so start with equal opportunity.</li><li><strong>COMPAS (a risk score shown to a judge):</strong> the harm is a score that means different things by group, so start with predictive parity and calibration, then accept that error-rate parity cannot also hold when base rates differ.</li></ul>
 <h3 id="detection-implementation-code">Detection/Implementation Code</h3>
 <p>Run from the repo root (<code>PYTHONPATH=. python3 explainers/code/choosing-a-fairness-metric.py</code>; that file is generated from the block below). It reads the benchmark&#x27;s current results; change <code>strategy</code> or <code>model</code> to look at another.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 
 results = pd.read_csv(&quot;results/results_fairness.csv&quot;)      # the benchmark&#x27;s current results
 base = results[(results.strategy == &quot;unawareness_proxy_removal&quot;) &amp; (results.model == &quot;logistic_regression&quot;)

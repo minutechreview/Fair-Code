@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">What Is Machine Learning Bias?</h1>
       <p class="explainer-lede">Four entry points. One pipeline. Measurable everywhere.</p>
@@ -229,7 +230,7 @@
 <p><strong>Proxy variable:</strong> Custody status correlates with race because pretrial detention patterns reflect unequal bail access, which reflects income inequality, which is racially structured. That correlation is real, but its own contribution to the model&#x27;s output is modest here: removing race alone (keeping custody status) already takes the fairness gap from 86.77pp down to 18.38pp - most of the racial signal was riding on race directly, not laundered entirely through this one proxy. Custody status accounts for the remaining difference between that 18.38pp and the 15.69pp reached once both are removed.</p>
 <p><strong>Feedback loop:</strong> COMPAS scores influence bail and sentencing decisions. A defendant flagged as high-risk is more likely to be detained pretrial. Pretrial detention increases the probability of conviction and reoffending (due to job loss, housing instability, and network effects). The model produces the outcome it predicted, and the outcome enters the next training set as evidence the prediction was correct.</p>
 <p>The biased model flags Black defendants as high-risk at 86.77%. The fair model - with race and custody status removed - reduces that gap to 15.69%. An 82% reduction from one targeted intervention on one proxy variable.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
@@ -266,7 +267,7 @@ print(f&quot;Fairness gap: {abs(black_rate - white_rate):.2%}&quot;)</code></pre
 <hr>
 <h3 id="detection-code">Detection Code</h3>
 <p>The standard fairness check for any binary classifier is demographic parity - the difference in positive prediction rates across groups. It requires only the model&#x27;s predictions and the demographic column.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 
 def demographic_parity_report(df_test, prediction_col, group_col):
     &quot;&quot;&quot;
@@ -305,7 +306,7 @@ def demographic_parity_report(df_test, prediction_col, group_col):
 # results[&#x27;prediction&#x27;] = model.predict(X_test)
 # demographic_parity_report(results, prediction_col=&#x27;prediction&#x27;, group_col=&#x27;race&#x27;)</code></pre>
 <p>To check for proxy variables once a gap is detected:</p>
-<pre><code class="language-python">from scipy.stats import chi2_contingency
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">from scipy.stats import chi2_contingency
 
 def check_proxy(df, feature_col, protected_col, p_threshold=0.05):
     &quot;&quot;&quot;
@@ -327,7 +328,7 @@ def check_proxy(df, feature_col, protected_col, p_threshold=0.05):
 <hr>
 <h3 id="the-fairness-metric-question">The Fairness Metric Question</h3>
 <p>Detecting a gap requires choosing a metric. Fair Code uses <strong>demographic parity</strong> as the default: equal positive prediction rates across groups. But demographic parity is not the only option, and it is not always the right one. There are at least three fairness metrics that practitioners commonly reach for, and it has been mathematically proven that you cannot satisfy all three simultaneously except in degenerate cases.</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Metric</th><th>What it requires</th></tr></thead><tbody><tr><td>Demographic Parity</td><td>Equal positive prediction rates across groups</td></tr><tr><td>Equalized Odds</td><td>Equal true positive and false positive rates across groups</td></tr><tr><td>Predictive Parity</td><td>Equal precision (positive predictive value) across groups</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Metric</th><th scope="col">What it requires</th></tr></thead><tbody><tr><td>Demographic Parity</td><td>Equal positive prediction rates across groups</td></tr><tr><td>Equalized Odds</td><td>Equal true positive and false positive rates across groups</td></tr><tr><td>Predictive Parity</td><td>Equal precision (positive predictive value) across groups</td></tr></tbody></table></div>
 <p>Choosing the wrong metric for a domain produces a model that looks fair on the metric you chose and is biased on the metrics you ignored. See <a href="fairness-metric-conflicts.html">Why Fairness Metrics Conflict</a> for the full mathematical proof and guidance on which metric fits which domain.</p>
 <hr>
 <h3 id="limitations">Limitations</h3>

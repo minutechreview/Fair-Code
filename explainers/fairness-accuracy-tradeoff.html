@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">What Is the Fairness-Accuracy Trade-off?</h1>
       <p class="explainer-lede">Closing a fairness gap is rarely free, and the cost isn&#x27;t always the same size.</p>
@@ -197,14 +198,14 @@
 <p>This isn&#x27;t a reason to avoid fairness mitigation. It&#x27;s a reason to report both numbers side by side, every time, so the trade being made is visible and can be judged deliberately rather than discovered later.</p>
 <h3 id="concrete-example-compas-audit-01">Concrete Example: COMPAS - Audit 01</h3>
 <p>Both tables below use the baseline logistic regression model on race, across all five strategies, using the frozen numbers exactly as <code>faircode/benchmark.py</code> computed them (<code>paper/results-frozen/results_fairness.csv</code> and <code>paper/results-frozen/results_performance.csv</code>).</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Strategy</th><th>Demographic Parity Diff</th><th>Accuracy</th><th>Accuracy vs. S0</th></tr></thead><tbody><tr><td>S0 baseline</td><td>0.855 (sig.)</td><td>65.3%</td><td>-</td></tr><tr><td>S1 unawareness</td><td>0.172 (sig.)</td><td>57.1%</td><td>-8.2 pts</td></tr><tr><td>S2 unawareness_proxy_removal</td><td>0.115 (sig.)</td><td>57.2%</td><td>-8.1 pts</td></tr><tr><td>S3 in_processing</td><td>-0.014 (n.s.)</td><td>53.9%</td><td>-11.4 pts</td></tr><tr><td>S4 post_processing</td><td>0.023 (n.s.)</td><td>55.7%</td><td>-9.7 pts</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Strategy</th><th scope="col">Demographic Parity Diff</th><th scope="col">Accuracy</th><th scope="col">Accuracy vs. S0</th></tr></thead><tbody><tr><td>S0 baseline</td><td>0.855 (sig.)</td><td>65.3%</td><td>-</td></tr><tr><td>S1 unawareness</td><td>0.172 (sig.)</td><td>57.1%</td><td>-8.2 pts</td></tr><tr><td>S2 unawareness_proxy_removal</td><td>0.115 (sig.)</td><td>57.2%</td><td>-8.1 pts</td></tr><tr><td>S3 in_processing</td><td>-0.014 (n.s.)</td><td>53.9%</td><td>-11.4 pts</td></tr><tr><td>S4 post_processing</td><td>0.023 (n.s.)</td><td>55.7%</td><td>-9.7 pts</td></tr></tbody></table></div>
 <p>The pattern <a href="mitigation-strategies.html">Mitigation Strategies</a> already shows on the fairness side - a huge S0→S1 improvement, a smaller S1→S2 gain, and S3/S4 converging near zero - has a cost sitting directly underneath it that a fairness-only table hides completely:</p>
 <p><strong>The single largest accuracy drop (S0 → S1, -8.2 points) coincides with the single largest fairness gain (85.5 → 17.2 points closed).</strong> Simply dropping the protected attribute buys most of the fairness improvement this ladder achieves, and most of the accuracy cost too, in the same step.</p>
 <p><strong>S3 in_processing reaches the best fairness number (-1.4 points, not statistically significant) at the worst accuracy (53.9%, an 11.4-point drop from baseline).</strong> This is the sharpest illustration of the trade-off on this audit: the strategy that gets closest to eliminating the demographic parity gap is also the one that costs the model the most predictive accuracy - not a coincidence, since <code>ExponentiatedGradient</code> is directly trading classification accuracy against the fairness constraint during training, by design.</p>
 <p><strong>S2 and S4 show it isn&#x27;t a strict, monotonic trade.</strong> S2 has a smaller fairness gap than S1 (11.5 vs. 17.2 points) at essentially the same accuracy (57.2% vs. 57.1%) - a case where fairness improved with no meaningful accuracy cost. S4 recovers some accuracy back from S3 (55.7% vs. 53.9%) while its fairness gap stays statistically indistinguishable from S3&#x27;s. The frontier isn&#x27;t a straight line where every fairness point costs a fixed accuracy price; some steps are close to free, and some are expensive, which is exactly why both numbers need checking at every step rather than assuming the relationship is linear.</p>
 <h3 id="detection-code">Detection Code</h3>
 <p>Pairs each strategy&#x27;s fairness gap with its accuracy so a table can&#x27;t report one without the other.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 
 
 def fairness_accuracy_tradeoff(fairness_df, performance_df, audit, fairness_metric,

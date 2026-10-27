@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Equalized Odds</h1>
       <p class="explainer-lede">A fairness metric that checks error rates, not just accuracy.</p>
@@ -209,13 +210,13 @@
 <p>COMPAS is a risk assessment tool deployed across 46 US states. Judges use its scores to make bail, sentencing, and parole decisions. It doesn&#x27;t just need to be accurate - it needs to be <em>equally</em> accurate for every defendant, regardless of race.</p>
 <h4 id="what-we-measured">What We Measured</h4>
 <p>Training a <code>RandomForestClassifier(random_state=42)</code> on <code>Sex_Code_Text</code>, <code>CustodyStatus</code>, and <code>MaritalStatus</code> (race already removed, matching this repo&#x27;s own &quot;remove race only&quot; recipe - see <a href="proxy-variables.html">proxy-variables.md</a>), we measured true positive rate (TPR) and false positive rate (FPR) against <code>ScoreText</code>-derived <code>is_high_risk</code>, broken down by race:</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Group</th><th>True Positive Rate</th><th>False Positive Rate</th></tr></thead><tbody><tr><td>Black Defendants</td><td>0.73</td><td>0.61</td></tr><tr><td>White Defendants</td><td>0.64</td><td>0.43</td></tr><tr><td><strong>Gap</strong></td><td><strong>0.08</strong></td><td><strong>0.18</strong></td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Group</th><th scope="col">True Positive Rate</th><th scope="col">False Positive Rate</th></tr></thead><tbody><tr><td>Black Defendants</td><td>0.73</td><td>0.61</td></tr><tr><td>White Defendants</td><td>0.64</td><td>0.43</td></tr><tr><td><strong>Gap</strong></td><td><strong>0.08</strong></td><td><strong>0.18</strong></td></tr></tbody></table></div>
 <p>Interpretation:</p>
 <ul><li>Black defendants who <em>will</em> reoffend are correctly flagged at a somewhat higher rate - but</li><li>Black defendants who <em>won&#x27;t</em> reoffend are also incorrectly flagged at a much higher rate than white defendants</li></ul>
 <p>The model isn&#x27;t just wrong more often for Black defendants. It&#x27;s wrong in a specific <em>direction</em> - over-flagging them as high-risk. Equalized Odds catches this because it checks both error types, not just overall accuracy.</p>
 <hr>
 <h3 id="how-to-detect-it-in-python">How to Detect It in Python</h3>
-<pre><code class="language-python">from fairlearn.metrics import MetricFrame, true_positive_rate, false_positive_rate
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">from fairlearn.metrics import MetricFrame, true_positive_rate, false_positive_rate
 import pandas as pd
 
 # Load your data
@@ -239,7 +240,7 @@ print(frame.by_group)
 print(&quot;\nDifferences:&quot;)
 print(frame.difference())</code></pre>
 <p>Example output (this exact recipe, this exact seed; a <code>RandomForestClassifier</code> with a fixed seed is not guaranteed bit-identical across CPU architectures and BLAS backends, so the last digit can move on other machines - see <a href="reject-inference.html">reject-inference.md</a> for the same caveat):</p>
-<pre><code>                  TPR   FPR
+<pre tabindex="0" aria-label="Scrollable code block"><code>                  TPR   FPR
 Black Defendants  0.73  0.61
 White Defendants  0.64  0.43
 
@@ -248,7 +249,7 @@ TPR    0.08
 FPR    0.18</code></pre>
 <p>Large differences in either metric indicate an Equalized Odds violation. Run this on every protected attribute in your dataset before deployment.</p>
 <p>Install dependency:</p>
-<pre><code class="language-bash">pip install fairlearn</code></pre>
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-bash">pip install fairlearn</code></pre>
 <hr>
 <h3 id="the-math">The Math</h3>
 <p>Equalized Odds requires two conditions to hold simultaneously:</p>

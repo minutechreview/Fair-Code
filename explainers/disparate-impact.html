@@ -173,6 +173,7 @@
 <script defer src="https://cloud.umami.is/script.js" data-website-id="84e0aebf-44e1-466e-b2c6-62f75e1c36c7"></script>
 </head>
 <body class="explainer-page">
+  <a class="skip-link" href="#explainer-start">Skip to content</a>
   <main class="explainer-shell is-ready" data-explainer-shell>
     <div class="explainer-topbar">
       <a class="explainer-back" href="../index.html#explainers">← Back to explainers</a>
@@ -182,7 +183,7 @@
       </div>
     </div>
 
-    <section class="explainer-hero">
+    <section class="explainer-hero" id="explainer-start" tabindex="-1">
       <div class="explainer-kicker">Explainer</div>
       <h1 class="explainer-headline">Disparate Impact</h1>
       <p class="explainer-lede">When outcomes differ even without explicit intent.</p>
@@ -207,20 +208,20 @@
 <p>The <a href="../index.html#project-hiring"><code>AI Fair Recruitment</code></a> audit in this repo trains a Random Forest classifier on a recruitment dataset with gender, age, experience, and technical test scores. Apply the 80% rule directly to its outputs:</p>
 <h4 id="biased-model-unfair-py-ai-20fair-20recruitment-unfair-py">Biased Model - <a href="../AI%20Fair%20Recruitment/unfair.py"><code>unfair.py</code></a></h4>
 <p>The dataset&#x27;s <code>Gender</code> column has three values, not two - Male, Female, and Other. The Four-Fifths Rule compares <em>every</em> group&#x27;s selection rate against the highest, not just whichever two look most convenient to compare:</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Group</th><th>Hire Rate</th></tr></thead><tbody><tr><td>Men</td><td>21.62%</td></tr><tr><td>Women</td><td>17.59%</td></tr><tr><td>Other</td><td>13.40%</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Group</th><th scope="col">Hire Rate</th></tr></thead><tbody><tr><td>Men</td><td>21.62%</td></tr><tr><td>Women</td><td>17.59%</td></tr><tr><td>Other</td><td>13.40%</td></tr></tbody></table></div>
 <p><strong>Disparate Impact Ratio = 13.40 / 21.62 = 0.620</strong> (lowest rate ÷ highest rate, across all three groups - not just Men vs. Women)</p>
 <p><strong>0.620 &lt; 0.80 → FAILS the Four-Fifths Rule.</strong></p>
 <p>Stopping at a Men-vs-Women comparison alone would understate the problem: that pair alone gives 17.59 / 21.62 = 0.81, just above the 0.80 line - a &quot;pass&quot; that hides the fact that the Other group is actually the most disadvantaged of the three, well below the threshold. A real EEOC complaint filed against this model would survive the <em>prima facie</em> stage. The employer would then bear the burden of proving the selection process is &quot;job-related and consistent with business necessity&quot; - the legal standard set in <em>Griggs</em> and codified in 42 U.S.C. §2000e-2(k).</p>
 <h4 id="mitigated-model-fair-py-ai-20fair-20recruitment-fair-py">Mitigated Model - <a href="../AI%20Fair%20Recruitment/fair.py"><code>fair.py</code></a></h4>
 <p>After dropping <code>Gender</code> and <code>Age</code> and retraining on <code>Experience_Years</code> and <code>Technical_Test_Score</code> only:</p>
-<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th>Group</th><th>Hire Rate</th></tr></thead><tbody><tr><td>Men</td><td>11.48%</td></tr><tr><td>Women</td><td>11.32%</td></tr><tr><td>Other</td><td>11.62%</td></tr></tbody></table></div>
+<div class="explainer-table-wrap"><table class="explainer-table"><thead><tr><th scope="col">Group</th><th scope="col">Hire Rate</th></tr></thead><tbody><tr><td>Men</td><td>11.48%</td></tr><tr><td>Women</td><td>11.32%</td></tr><tr><td>Other</td><td>11.62%</td></tr></tbody></table></div>
 <p><strong>Disparate Impact Ratio = 11.32 / 11.62 = 0.974</strong> (lowest ÷ highest, across all three groups)</p>
 <p><strong>0.974 ≥ 0.80 → PASSES the Four-Fifths Rule</strong> - for every group, not just the two that happened to fail before.</p>
 <p>The legal exposure is gone, and the model is selecting candidates on demonstrated ability rather than inferred demographic signal.</p>
 <hr>
 <h3 id="detection-code-how-to-calculate-it-in-python">Detection Code: How to Calculate It in Python</h3>
 <p>The 80% rule is one of the cheapest fairness checks you can run. No external library required.</p>
-<pre><code class="language-python">import pandas as pd
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">import pandas as pd
 
 def disparate_impact_ratio(df, prediction_col, group_col, positive_label=1):
     &quot;&quot;&quot;
@@ -249,7 +250,7 @@ def disparate_impact_ratio(df, prediction_col, group_col, positive_label=1):
     }</code></pre>
 <h4 id="applying-it-to-the-hiring-audit">Applying it to the hiring audit</h4>
 <p>Drop this into <code>AI Fair Recruitment/unfair.py</code> right after the predictions are generated:</p>
-<pre><code class="language-python">test_results[&quot;Gender&quot;] = df.loc[X_test.index, &quot;Gender&quot;].values
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">test_results[&quot;Gender&quot;] = df.loc[X_test.index, &quot;Gender&quot;].values
 
 result = disparate_impact_ratio(
     df=test_results,
@@ -271,7 +272,7 @@ print(result)
 <p>Run the same snippet against <code>fair.py</code> and the ratio climbs to <strong>0.989</strong> - passing.</p>
 <h4 id="using-fairlearn">Using Fairlearn</h4>
 <p>The same metric is available out-of-the-box in <a href="https://fairlearn.org/" target="_blank" rel="noreferrer noopener">Fairlearn</a>:</p>
-<pre><code class="language-python">from fairlearn.metrics import demographic_parity_ratio
+<pre tabindex="0" aria-label="Scrollable code block"><code class="language-python">from fairlearn.metrics import demographic_parity_ratio
 
 ratio = demographic_parity_ratio(
     y_true=y_test,
